@@ -65,7 +65,7 @@ export default function AiCoach() {
       const aiMsg = { role: 'model', parts: [{ text: data.message }] };
       setChatHistory((prev) => [...prev, aiMsg]);
     } catch (err) {
-      const fallback = { role: 'model', parts: [{ text: err?.message || "AI is unavailable. Please try again shortly." }] };
+      const fallback = { role: 'model', parts: [{ text: (err?.message || "AI is unavailable. Please try again shortly.") }] };
       setChatHistory((prev) => [...prev, fallback]);
     } finally {
       setLoading(false);
