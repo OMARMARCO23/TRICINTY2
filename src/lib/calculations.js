@@ -37,6 +37,81 @@ export function getMonthBoundaries(date = new Date()) {
   return { start, end, daysInMonth: end.getDate(), daysSoFar: date.getDate() };
 }
 
+// Trend-based daily kWh using this month's entries.
+// We take per-interval rates (delta kWh / delta days) and compute a recency-weighted average.
+// Fallback: raw average since first in-month reading.
+export function computeTrendDailyKwh(readings, now = new Date()) {
+  const MS_PER_DAY = 1000 * 60 * 60 * 24;
+  const { start, daysInMonth, daysSoFar } = getMonthBoundaries(now);
+
+  if (!Array.isArray(readings) || readings.length === 0) {
+    return {
+      currentUsage: 0,
+      rawAvgDaily: 0,
+      trendDaily: 0,
+      predictedUsage: 0,
+      daysInMonth,
+      daysSoFar,
+      daysLeft: Math.max(daysInMonth - daysSoFar, 0),
+    };
+  }
+
+  // Sort readings by date
+  const sorted = [...readings].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const monthReadings = sorted.filter(r => new Date(r.date) >= start);
+
+  const firstInMonth = monthReadings[0] || sorted[0];
+  const lastReading = sorted[sorted.length - 1];
+
+  const firstVal = firstInMonth?.value ?? 0;
+  const lastVal = lastReading?.value ?? firstVal;
+
+  const currentUsage = Math.max(0, lastVal - firstVal);
+
+  const firstDate = new Date(firstInMonth?.date || now);
+  const elapsedDays = Math.max(1, (now - firstDate) / MS_PER_DAY);
+  const rawAvgDaily = currentUsage / elapsedDays;
+
+  // Build interval rates only within this month
+  const intervals = [];
+  for (let i = 1; i < monthReadings.length; i++) {
+    const prev = monthReadings[i - 1];
+    const curr = monthReadings[i];
+    const dKwh = curr.value - prev.value;
+    const dDays = Math.max( (new Date(curr.date) - new Date(prev.date)) / MS_PER_DAY, 0 );
+    if (dKwh >= 0 && dDays > 0) {
+      intervals.push(dKwh / dDays);
+    }
+  }
+
+  let trendDaily;
+  if (intervals.length === 0) {
+    trendDaily = rawAvgDaily; // fallback
+  } else {
+    // Recency-weighted average: newer intervals weigh more
+    let wsum = 0, wtotal = 0;
+    for (let i = 0; i < intervals.length; i++) {
+      const w = i + 1;
+      wsum += w * intervals[i];
+      wtotal += w;
+    }
+    trendDaily = wsum / wtotal;
+  }
+
+  const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
+  const predictedUsage = currentUsage + trendDaily * daysLeft;
+
+  return {
+    currentUsage,
+    rawAvgDaily,
+    trendDaily,
+    predictedUsage,
+    daysInMonth,
+    daysSoFar,
+    daysLeft,
+  };
+}
+
 // How many kWh remain until the next price tier boundary (based on monthly kWh)
 export function kwhToNextTier(currentKwh, tariffs) {
   const tiers = tariffs?.tiers || [];
@@ -52,7 +127,7 @@ export function kwhToNextTier(currentKwh, tariffs) {
 // kWh allowed for a given budget with the provided tariffs (binary search)
 export function kwhForBudget(budget, tariffs) {
   if (!budget || !tariffs) return 0;
-  let lo = 0, hi = 100000; // generous upper bound
+  let lo = 0, hi = 100000; // upper bound for month
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
     const { bill } = calculateBill(mid, tariffs);
