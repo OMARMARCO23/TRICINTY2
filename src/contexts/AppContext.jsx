@@ -7,7 +7,7 @@ export const AppContext = createContext(null);
 export function AppProvider({ children }) {
   const [readings, setReadings] = useLocalStorage('tricinty-readings', []);
   const [settings, setSettings] = useLocalStorage('tricinty-settings', {
-    theme: 'light',
+    theme: 'auto', // 'light' | 'dark' | 'auto'
     language: 'en',
     country: 'US',
     goal: 100,
@@ -18,9 +18,27 @@ export function AppProvider({ children }) {
   ]);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', settings.theme);
-    document.documentElement.setAttribute('lang', settings.language);
-    document.documentElement.setAttribute('dir', settings.language === 'ar' ? 'rtl' : 'ltr');
+    const applyTheme = () => {
+      const isAuto = settings.theme === 'auto';
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const theme = isAuto ? (prefersDark ? 'dark' : 'light') : settings.theme;
+      document.documentElement.setAttribute('data-theme', theme);
+      document.documentElement.setAttribute('lang', settings.language);
+      document.documentElement.setAttribute('dir', settings.language === 'ar' ? 'rtl' : 'ltr');
+    };
+    applyTheme();
+
+    let media;
+    if (settings.theme === 'auto') {
+      media = window.matchMedia('(prefers-color-scheme: dark)');
+      const handler = () => applyTheme();
+      if (media.addEventListener) media.addEventListener('change', handler);
+      else media.addListener(handler);
+      return () => {
+        if (media.removeEventListener) media.removeEventListener('change', handler);
+        else media.removeListener(handler);
+      };
+    }
   }, [settings.theme, settings.language]);
 
   return (
