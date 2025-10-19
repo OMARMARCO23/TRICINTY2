@@ -2,30 +2,33 @@ import { useContext, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
 import {
   calculateBill,
-  getMonthBoundaries,
+  computeTrendDailyKwh,
   kwhToNextTier,
   dailyTargetForBudget,
-  forecastBand
+  forecastBand,
 } from '../lib/calculations.js';
-import { CircleDollarSign, Zap, BarChart, TrendingUp, Plus } from 'lucide-react';
+import { CircleDollarSign, Zap, TrendingUp, Plus, Activity } from 'lucide-react';
 
 export default function Dashboard() {
   const { readings, setReadings, settings } = useContext(AppContext);
   const [newReading, setNewReading] = useState('');
 
-  const { start, daysSoFar, daysInMonth } = getMonthBoundaries();
-  const readingsThisMonth = readings.filter(r => new Date(r.date) >= start);
-  const firstValue = readingsThisMonth[0]?.value ?? readings[0]?.value ?? 0;
-  const last = readings[readings.length - 1]?.value ?? firstValue;
-  const currentUsage = Math.max(last - firstValue, 0);
+  // Compute month metrics using trend-based daily consumption
+  const {
+    currentUsage,
+    rawAvgDaily,
+    trendDaily,
+    predictedUsage,
+    daysInMonth,
+    daysSoFar,
+    daysLeft
+  } = computeTrendDailyKwh(readings);
 
   const actual = calculateBill(currentUsage, settings.tariffs);
-  const avgDaily = currentUsage > 0 && daysSoFar > 0 ? currentUsage / daysSoFar : 0;
-  const predictedUsage = avgDaily * daysInMonth;
   const predicted = calculateBill(predictedUsage, settings.tariffs);
-
-  const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
+  const band = forecastBand(predictedUsage, settings.tariffs, 0.10);
   const toNextTier = kwhToNextTier(currentUsage, settings.tariffs);
+
   const { dailyTarget } = dailyTargetForBudget(
     Number(settings.goal) || 0,
     settings.tariffs,
@@ -33,7 +36,6 @@ export default function Dashboard() {
     currentUsage,
     daysSoFar
   );
-  const band = forecastBand(predictedUsage, settings.tariffs, 0.10);
 
   const goalProgress = settings.goal > 0 ? (parseFloat(actual.bill) / settings.goal) * 100 : 0;
   const progressColor =
@@ -65,7 +67,11 @@ export default function Dashboard() {
         </StatCard>
 
         <StatCard icon={<Zap className="h-7 w-7 text-primary" />} title="Current Usage" value={`${currentUsage.toFixed(0)} kWh`} />
-        <StatCard icon={<BarChart className="h-7 w-7 text-primary" />} title="Avg. Daily" value={`${avgDaily.toFixed(2)} kWh`} />
+
+        <StatCard icon={<Activity className="h-7 w-7 text-primary" />} title="Daily Trend" value={`${trendDaily.toFixed(2)} kWh/day`}>
+          <p className="text-xs opacity-70">Avg so far: {rawAvgDaily.toFixed(2)} kWh/day</p>
+        </StatCard>
+
         <StatCard icon={<TrendingUp className="h-7 w-7 text-primary" />} title="Actual Bill" value={`${actual.bill} ${actual.currency}`} />
       </div>
 
@@ -85,9 +91,11 @@ export default function Dashboard() {
           <ul className="text-sm space-y-1">
             <li>Days left this month: {daysLeft}</li>
             {Number(settings.goal) > 0 && (
-              <li>To stay under {settings.goal} {actual.currency}, aim for about {dailyTarget} kWh/day for the rest of the month.</li>
+              <li>
+                To stay under {settings.goal} {actual.currency}, aim for about {dailyTarget} kWh/day for the rest of the month.
+              </li>
             )}
-            {isFinite(toNextTier) && <li>You are {toNextTier.toFixed(0)} kWh from the next price tier.</li>}
+            {Number.isFinite(toNextTier) && <li>You are {toNextTier.toFixed(0)} kWh from the next price tier.</li>}
           </ul>
         </div>
       </div>
@@ -130,7 +138,7 @@ export default function Dashboard() {
       <dialog id="add_reading_modal" className="modal">
         <div className="modal-box">
           <h3 className="font-bold text-lg">Add New Meter Reading</h3>
-          <p className="py-2">Last reading: {readings[readings.length - 1]?.value ?? 0} kWh</p>
+          <p className="py-2">Enter a value greater than your last reading.</p>
           <input
             type="number"
             placeholder="Enter new reading"
