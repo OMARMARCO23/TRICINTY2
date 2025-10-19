@@ -1,25 +1,44 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// Serverless AI endpoint using Google Generative Language API v1 via fetch (no client SDK)
 
 async function readBody(req) {
   if (req.body && Object.keys(req.body).length) return req.body;
   return await new Promise((resolve) => {
     let data = "";
-    req.on("data", (chunk) => (data += chunk));
+    req.on("data", (c) => (data += c));
     req.on("end", () => {
       try { resolve(JSON.parse(data || "{}")); } catch { resolve({}); }
     });
   });
 }
 
+async function callModel(model, prompt, apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }]
+    }),
+  });
+  const json = await resp.json();
+  if (!resp.ok) {
+    const err = json?.error?.message || `${resp.status} ${resp.statusText}`;
+    throw new Error(err);
+  }
+  const parts = json?.candidates?.[0]?.content?.parts || [];
+  const txt = parts.map(p => p.text).join("").trim();
+  if (!txt) throw new Error("Empty response from model");
+  return txt;
+}
+
 export default async function handler(req, res) {
-  // CORS preflight (safe even if same-origin on Vercel)
+  // Optional CORS for future multi-origin use
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     return res.status(200).end();
   }
-
   if (req.method !== "POST") {
     return res.status(405).json({ code: "METHOD_NOT_ALLOWED", message: "Only POST requests are allowed" });
   }
@@ -27,17 +46,13 @@ export default async function handler(req, res) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      console.error("AI error: Missing GEMINI_API_KEY");
-      return res.status(500).json({ code: "MISSING_API_KEY", message: "Server is missing Gemini API key. Set GEMINI_API_KEY in Vercel." });
+      return res.status(500).json({ code: "MISSING_API_KEY", message: "Set GEMINI_API_KEY in Vercel project settings." });
     }
 
     const { chatHistory, usageData, language } = await readBody(req);
     if (!chatHistory || !usageData) {
       return res.status(400).json({ code: "BAD_REQUEST", message: "Missing chatHistory or usageData" });
     }
-
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const prompt = `
 You are "Tricinty", an expert AI energy coach for a smart energy app.
@@ -64,18 +79,30 @@ Guidelines:
 - No markdown, plain sentences only.
 `;
 
-    const result = await model.generateContent(prompt);
-    const text = result?.response?.text?.() || "";
+    // Try in order. v1 supports these. We fall back if a model is not enabled for the key/region.
+    const models = [
+      "gemini-1.5-flash",
+      "gemini-1.5-flash-8b",
+      "gemini-1.5-pro"
+    ];
 
-    if (!text) {
-      console.error("AI error: Empty response");
-      return res.status(502).json({ code: "EMPTY_RESPONSE", message: "AI returned an empty response. Try again shortly." });
+    let answer = "";
+    let lastErr = null;
+    for (const m of models) {
+      try {
+        answer = await callModel(m, prompt, apiKey);
+        break;
+      } catch (e) {
+        lastErr = e;
+        continue;
+      }
+    }
+    if (!answer) {
+      return res.status(502).json({ code: "MODEL_ERROR", message: `AI error: ${lastErr?.message || "Unknown"}` });
     }
 
-    return res.status(200).json({ message: text });
+    return res.status(200).json({ message: answer });
   } catch (err) {
-    console.error("AI route error:", err);
-    const msg = err?.message || "Unknown AI error";
-    return res.status(500).json({ code: "AI_ERROR", message: `AI error: ${msg}` });
+    return res.status(500).json({ code: "AI_ERROR", message: `AI error: ${err?.message || "Unknown"}` });
   }
 }
