@@ -85,7 +85,7 @@ export default function HistoryPage() {
               </tbody>
             </table>
           </div>
-          <p className="text-xs opacity-60 mt-2">Tip: You can delete an incorrect entry here and re-enter the correct value.</p>
+          <p className="text-xs opacity-60 mt-2">Tip: Delete an incorrect entry here and re-enter the correct value.</p>
         </div>
       </div>
     </div>
