@@ -2,6 +2,7 @@ import { useContext, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
 import { calculateBill, getMonthBoundaries } from '../lib/calculations.js';
 import { CircleDollarSign, Zap, BarChart, TrendingUp, Plus } from 'lucide-react';
+import { kwhToNextTier, dailyTargetForBudget, forecastBand } from '../lib/calculations.js';
 
 export default function Dashboard() {
   const { readings, setReadings, settings } = useContext(AppContext);
