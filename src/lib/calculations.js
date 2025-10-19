@@ -32,3 +32,50 @@ export function getMonthBoundaries(date = new Date()) {
   const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
   return { start, end, daysInMonth: end.getDate(), daysSoFar: date.getDate() };
 }
+export function kwhToNextTier(currentKwh, tariffs) {
+  const tiers = tariffs?.tiers || [];
+  let prevUpTo = 0;
+  for (const t of tiers) {
+    const cap = t.upTo;
+    if (!isFinite(cap)) return Infinity;
+    if (currentKwh < cap) {
+      return Math.max(0, cap - currentKwh);
+    }
+    prevUpTo = cap;
+  }
+  return Infinity;
+}
+
+// Binary-search kWh that matches a budget with given tariffs
+export function kwhForBudget(budget, tariffs) {
+  if (!budget || !tariffs) return 0;
+  let lo = 0, hi = 100000; // up to 100 MWh/month upper bound
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    const { bill } = calculateBill(mid, tariffs);
+    if (parseFloat(bill) > budget) hi = mid; else lo = mid;
+  }
+  return lo;
+}
+
+// Daily target to stay under budget for remainder of month
+export function dailyTargetForBudget(budget, tariffs, daysInMonth, consumedKwhSoFar, dayOfMonth) {
+  const remainingDays = Math.max(daysInMonth - dayOfMonth, 0);
+  const maxMonthKwh = kwhForBudget(budget, tariffs);
+  const remainingKwhAllowed = Math.max(0, maxMonthKwh - consumedKwhSoFar);
+  const dailyTarget = remainingDays > 0 ? (remainingKwhAllowed / remainingDays) : 0;
+  return {
+    dailyTarget: Number(dailyTarget.toFixed(2)),
+    remainingKwhAllowed: Number(remainingKwhAllowed.toFixed(2)),
+    remainingDays
+  };
+}
+
+// Simple forecast band (±10%). You can replace with EMA/regression later.
+export function forecastBand(predictedUsage, tariffs, band = 0.10) {
+  const lowUsage = Math.max(0, predictedUsage * (1 - band));
+  const highUsage = predictedUsage * (1 + band);
+  const { bill: low } = calculateBill(lowUsage, tariffs);
+  const { bill: high } = calculateBill(highUsage, tariffs);
+  return { low, high };
+}
