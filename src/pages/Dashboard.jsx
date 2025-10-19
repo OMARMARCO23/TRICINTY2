@@ -1,11 +1,11 @@
 import { useContext, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
 import {
-  calculateBill,
+  calculateBillByMode,
   computeTrendDailyKwh,
   kwhToNextTier,
   dailyTargetForBudget,
-  forecastBand,
+  forecastBand
 } from '../lib/calculations.js';
 import { CircleDollarSign, Zap, TrendingUp, Plus, Activity } from 'lucide-react';
 
@@ -13,7 +13,6 @@ export default function Dashboard() {
   const { readings, setReadings, settings } = useContext(AppContext);
   const [newReading, setNewReading] = useState('');
 
-  // Compute month metrics using trend-based daily consumption
   const {
     currentUsage,
     rawAvgDaily,
@@ -24,9 +23,9 @@ export default function Dashboard() {
     daysLeft
   } = computeTrendDailyKwh(readings);
 
-  const actual = calculateBill(currentUsage, settings.tariffs);
-  const predicted = calculateBill(predictedUsage, settings.tariffs);
-  const band = forecastBand(predictedUsage, settings.tariffs, 0.10);
+  const actual = calculateBillByMode(currentUsage, settings.tariffs, settings.tariffMode);
+  const predicted = calculateBillByMode(predictedUsage, settings.tariffs, settings.tariffMode);
+  const band = forecastBand(predictedUsage, settings.tariffs, settings.tariffMode, 0.10);
   const toNextTier = kwhToNextTier(currentUsage, settings.tariffs);
 
   const { dailyTarget } = dailyTargetForBudget(
@@ -38,8 +37,7 @@ export default function Dashboard() {
   );
 
   const goalProgress = settings.goal > 0 ? (parseFloat(actual.bill) / settings.goal) * 100 : 0;
-  const progressColor =
-    goalProgress >= 100 ? 'progress-error' : goalProgress > 75 ? 'progress-warning' : 'progress-success';
+  const progressColor = goalProgress >= 100 ? 'progress-error' : goalProgress > 75 ? 'progress-warning' : 'progress-success';
 
   const addReading = () => {
     const val = Number(newReading);
@@ -91,9 +89,7 @@ export default function Dashboard() {
           <ul className="text-sm space-y-1">
             <li>Days left this month: {daysLeft}</li>
             {Number(settings.goal) > 0 && (
-              <li>
-                To stay under {settings.goal} {actual.currency}, aim for about {dailyTarget} kWh/day for the rest of the month.
-              </li>
+              <li>To stay under {settings.goal} {actual.currency}, aim for about {dailyTarget} kWh/day for the rest of the month.</li>
             )}
             {Number.isFinite(toNextTier) && <li>You are {toNextTier.toFixed(0)} kWh from the next price tier.</li>}
           </ul>
@@ -126,10 +122,7 @@ export default function Dashboard() {
 
       {/* FAB */}
       <div className="fixed bottom-24 right-4">
-        <button
-          className="btn btn-primary btn-circle btn-lg shadow-lg"
-          onClick={() => document.getElementById('add_reading_modal')?.showModal()}
-        >
+        <button className="btn btn-primary btn-circle btn-lg shadow-lg" onClick={() => document.getElementById('add_reading_modal')?.showModal()}>
           <Plus size={28} />
         </button>
       </div>
