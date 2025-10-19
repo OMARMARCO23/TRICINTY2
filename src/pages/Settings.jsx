@@ -59,12 +59,48 @@ export default function SettingsPage() {
         <input type="number" name="goal" className="input input-bordered" value={settings.goal} onChange={onField} />
       </div>
 
+      {/* Legal & Info */}
       <div className="card bg-base-100 shadow">
         <div className="card-body">
-          <h2 className="card-title">Privacy</h2>
-          <p>All your data (meter readings and settings) are stored locally on your device. Nothing is uploaded.</p>
+          <h2 className="card-title">Legal & Info</h2>
+
+          <div className="collapse collapse-arrow bg-base-200">
+            <input type="checkbox" />
+            <div className="collapse-title text-md font-medium">About</div>
+            <div className="collapse-content">
+              <p>
+                TRICINTY is an app to help you track and reduce your electricity consumption.
+              </p>
+              <p className="mt-2">
+                For a full-screen, app-like experience, install TRICINTY to your device's home screen using your browser's
+                "Add to Home Screen" option.
+              </p>
+            </div>
+          </div>
+
+          <div className="collapse collapse-arrow bg-base-200 mt-2">
+            <input type="checkbox" />
+            <div className="collapse-title text-md font-medium">Privacy Policy</div>
+            <div className="collapse-content">
+              <p>
+                Your data is stored locally on your device and is not shared with any third parties. We do not collect any personal information.
+              </p>
+            </div>
+          </div>
+
+          <div className="collapse collapse-arrow bg-base-200 mt-2">
+            <input type="checkbox" />
+            <div className="collapse-title text-md font-medium">Disclaimer</div>
+            <div className="collapse-content">
+              <p>
+                The bill predictions and consumption data are estimates for informational purposes only. Actual results may vary.
+                We are not responsible for any discrepancies.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
+
     </div>
   );
 }
