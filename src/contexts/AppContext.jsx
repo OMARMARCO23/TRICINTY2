@@ -12,6 +12,7 @@ export function AppProvider({ children }) {
     country: 'US',
     goal: 100,
     tariffs: TARIFF_PRESETS['US'],
+    tariffMode: 'progressive' // 'progressive' | 'whole-tier'
   });
   const [chatHistory, setChatHistory] = useLocalStorage('tricinty-chat-history', [
     { role: 'model', parts: [{ text: "Hi! I'm Tricinty, your AI Energy Coach. Ask me how to cut your bill." }] }
