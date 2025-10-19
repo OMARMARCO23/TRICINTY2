@@ -12,19 +12,30 @@ async function readBody(req) {
 }
 
 export default async function handler(req, res) {
+  // CORS preflight (safe even if same-origin on Vercel)
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
-    res.statusCode = 405;
-    return res.json({ message: "Only POST requests are allowed" });
+    return res.status(405).json({ code: "METHOD_NOT_ALLOWED", message: "Only POST requests are allowed" });
   }
 
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      res.statusCode = 500;
-      return res.json({ message: "Gemini API key is not set on the server." });
+      console.error("AI error: Missing GEMINI_API_KEY");
+      return res.status(500).json({ code: "MISSING_API_KEY", message: "Server is missing Gemini API key. Set GEMINI_API_KEY in Vercel." });
     }
 
     const { chatHistory, usageData, language } = await readBody(req);
+    if (!chatHistory || !usageData) {
+      return res.status(400).json({ code: "BAD_REQUEST", message: "Missing chatHistory or usageData" });
+    }
+
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
@@ -47,18 +58,24 @@ Conversation so far: ${JSON.stringify(chatHistory || [])}
 
 Guidelines:
 - Use the daily trend for projections and give numeric, actionable tips.
-- If close to a higher tier or over daily target, warn and suggest specific actions to avoid crossing (HVAC, water heater, fridge seal, standby).
+- If close to a higher tier or over daily target, warn and suggest specific actions to avoid crossing (HVAC, water heater, fridge seal, standby devices).
 - If asked "why high?", suggest 2-3 likely causes based on season and common appliances.
 - Encourage low-cost actions (thermostat 1-2°, off-peak usage, LEDs, shorter showers, air-dry laundry).
 - No markdown, plain sentences only.
 `;
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const text = result?.response?.text?.() || "";
+
+    if (!text) {
+      console.error("AI error: Empty response");
+      return res.status(502).json({ code: "EMPTY_RESPONSE", message: "AI returned an empty response. Try again shortly." });
+    }
 
     return res.status(200).json({ message: text });
   } catch (err) {
     console.error("AI route error:", err);
-    return res.status(500).json({ message: "Sorry, I'm having trouble thinking right now. Please try again." });
+    const msg = err?.message || "Unknown AI error";
+    return res.status(500).json({ code: "AI_ERROR", message: `AI error: ${msg}` });
   }
 }
