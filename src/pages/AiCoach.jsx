@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
 import {
-  calculateBill,
+  calculateBillByMode,
   computeTrendDailyKwh,
   kwhToNextTier,
   dailyTargetForBudget
@@ -28,11 +28,10 @@ export default function AiCoach() {
     setInput('');
     setLoading(true);
 
-    // Trend-based usage data
     const { currentUsage, rawAvgDaily, trendDaily, predictedUsage, daysInMonth, daysSoFar, daysLeft } =
       computeTrendDailyKwh(readings);
 
-    const predicted = calculateBill(predictedUsage, settings.tariffs);
+    const predicted = calculateBillByMode(predictedUsage, settings.tariffs, settings.tariffMode);
     const toNextTier = kwhToNextTier(currentUsage, settings.tariffs);
     const { dailyTarget } = dailyTargetForBudget(
       Number(settings.goal) || 0,
@@ -43,7 +42,7 @@ export default function AiCoach() {
     );
 
     const usageData = {
-      avgDailyUsage: trendDaily.toFixed(2), // keep legacy key for compatibility
+      avgDailyUsage: trendDaily.toFixed(2),
       avgDailyTrend: trendDaily.toFixed(2),
       avgDailySoFar: rawAvgDaily.toFixed(2),
       currentUsage: currentUsage.toFixed(2),
@@ -66,7 +65,7 @@ export default function AiCoach() {
       const aiMsg = { role: 'model', parts: [{ text: data.message }] };
       setChatHistory((prev) => [...prev, aiMsg]);
     } catch (err) {
-      const fallback = { role: 'model', parts: [{ text: err?.message || "Sorry, I couldn't connect. Try again later." }] };
+      const fallback = { role: 'model', parts: [{ text: err?.message || "AI is unavailable. Please try again shortly." }] };
       setChatHistory((prev) => [...prev, fallback]);
     } finally {
       setLoading(false);
