@@ -49,9 +49,17 @@ export default function SettingsPage() {
           <option value="US">USA</option>
           <option value="Other">Other (Manual)</option>
         </select>
-        {settings.country === 'Other' && (
-          <p className="text-sm opacity-70 mt-2">Manual tariff editor can be added here.</p>
-        )}
+      </div>
+
+      <div className="form-control">
+        <label className="label"><span className="label-text">Tariff Mode</span></label>
+        <select name="tariffMode" className="select select-bordered" value={settings.tariffMode} onChange={onField}>
+          <option value="progressive">Progressive blocks</option>
+          <option value="whole-tier">Whole-tier (all kWh at the reached tier)</option>
+        </select>
+        <p className="text-xs opacity-70 mt-1">
+          Some providers charge all monthly kWh at the reached tier. Choose the mode that matches your utility.
+        </p>
       </div>
 
       <div className="form-control">
@@ -68,13 +76,8 @@ export default function SettingsPage() {
             <input type="checkbox" />
             <div className="collapse-title text-md font-medium">About</div>
             <div className="collapse-content">
-              <p>
-                TRICINTY is an app to help you track and reduce your electricity consumption.
-              </p>
-              <p className="mt-2">
-                For a full-screen, app-like experience, install TRICINTY to your device's home screen using your browser's
-                "Add to Home Screen" option.
-              </p>
+              <p>TRICINTY is an app to help you track and reduce your electricity consumption.</p>
+              <p className="mt-2">For a full-screen, app-like experience, install TRICINTY to your device's home screen using your browser's "Add to Home Screen" option.</p>
             </div>
           </div>
 
@@ -82,9 +85,7 @@ export default function SettingsPage() {
             <input type="checkbox" />
             <div className="collapse-title text-md font-medium">Privacy Policy</div>
             <div className="collapse-content">
-              <p>
-                Your data is stored locally on your device and is not shared with any third parties. We do not collect any personal information.
-              </p>
+              <p>Your data is stored locally on your device and is not shared with any third parties. We do not collect any personal information.</p>
             </div>
           </div>
 
@@ -92,10 +93,7 @@ export default function SettingsPage() {
             <input type="checkbox" />
             <div className="collapse-title text-md font-medium">Disclaimer</div>
             <div className="collapse-content">
-              <p>
-                The bill predictions and consumption data are estimates for informational purposes only. Actual results may vary.
-                We are not responsible for any discrepancies.
-              </p>
+              <p>The bill predictions and consumption data are estimates for informational purposes only. Actual results may vary. We are not responsible for any discrepancies.</p>
             </div>
           </div>
         </div>
