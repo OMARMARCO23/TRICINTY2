@@ -2,7 +2,7 @@ import { useContext, useEffect, useRef, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
 import {
   calculateBill,
-  getMonthBoundaries,
+  computeTrendDailyKwh,
   kwhToNextTier,
   dailyTargetForBudget
 } from '../lib/calculations.js';
@@ -28,18 +28,11 @@ export default function AiCoach() {
     setInput('');
     setLoading(true);
 
-    // Prepare usage data with richer context
-    const { start, daysSoFar, daysInMonth } = getMonthBoundaries();
-    const readingsThisMonth = readings.filter((r) => new Date(r.date) >= start);
-    const firstValue = readingsThisMonth[0]?.value ?? readings[0]?.value ?? 0;
-    const last = readings[readings.length - 1]?.value ?? firstValue;
-    const currentUsage = Math.max(last - firstValue, 0);
+    // Trend-based usage data
+    const { currentUsage, rawAvgDaily, trendDaily, predictedUsage, daysInMonth, daysSoFar, daysLeft } =
+      computeTrendDailyKwh(readings);
 
-    const avgDaily = currentUsage > 0 && daysSoFar > 0 ? currentUsage / daysSoFar : 0;
-    const predictedUsage = avgDaily * daysInMonth;
     const predicted = calculateBill(predictedUsage, settings.tariffs);
-
-    const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
     const toNextTier = kwhToNextTier(currentUsage, settings.tariffs);
     const { dailyTarget } = dailyTargetForBudget(
       Number(settings.goal) || 0,
@@ -50,13 +43,15 @@ export default function AiCoach() {
     );
 
     const usageData = {
-      avgDailyUsage: avgDaily.toFixed(2),
+      avgDailyUsage: trendDaily.toFixed(2), // keep legacy key for compatibility
+      avgDailyTrend: trendDaily.toFixed(2),
+      avgDailySoFar: rawAvgDaily.toFixed(2),
       currentUsage: currentUsage.toFixed(2),
       predictedBill: `${predicted.bill} ${predicted.currency}`,
       goal: `${settings.goal} ${settings.tariffs.currency}`,
       currency: settings.tariffs.currency,
       daysLeft,
-      kwhToNextTier: isFinite(toNextTier) ? Number(toNextTier.toFixed(0)) : 'Infinity',
+      kwhToNextTier: Number.isFinite(toNextTier) ? Number(toNextTier.toFixed(0)) : 'Infinity',
       dailyTarget
     };
 
