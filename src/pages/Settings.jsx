@@ -5,11 +5,11 @@ import { TARIFF_PRESETS } from '../lib/calculations.js';
 export default function SettingsPage() {
   const { settings, setSettings } = useContext(AppContext);
 
-  const onTheme = (e) => setSettings({ ...settings, theme: e.target.checked ? 'dark' : 'light' });
   const onField = (e) => {
     const { name, value } = e.target;
     setSettings({ ...settings, [name]: name === 'goal' ? Number(value) : value });
   };
+
   const onCountry = (e) => {
     const country = e.target.value;
     setSettings({
@@ -24,10 +24,12 @@ export default function SettingsPage() {
       <h1 className="text-2xl font-bold">Settings</h1>
 
       <div className="form-control">
-        <label className="label cursor-pointer">
-          <span className="label-text">Dark Mode</span>
-          <input type="checkbox" className="toggle toggle-primary" checked={settings.theme === 'dark'} onChange={onTheme} />
-        </label>
+        <label className="label"><span className="label-text">Theme</span></label>
+        <select name="theme" className="select select-bordered" value={settings.theme} onChange={onField}>
+          <option value="auto">Auto (follow system)</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
       </div>
 
       <div className="form-control">
@@ -47,7 +49,9 @@ export default function SettingsPage() {
           <option value="US">USA</option>
           <option value="Other">Other (Manual)</option>
         </select>
-        {settings.country === 'Other' && <p className="text-sm opacity-70 mt-2">Manual tariff editor can be added here.</p>}
+        {settings.country === 'Other' && (
+          <p className="text-sm opacity-70 mt-2">Manual tariff editor can be added here.</p>
+        )}
       </div>
 
       <div className="form-control">
