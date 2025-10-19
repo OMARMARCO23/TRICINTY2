@@ -1,9 +1,10 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import Layout from './components/Layout.jsx';
-import Dashboard from './pages/Dashboard.jsx';
-import History from './pages/History.jsx';
-import AiCoach from './pages/AiCoach.jsx';
-import Settings from './pages/Settings.jsx';
+import Layout from './components/Layout';
+import Dashboard from './pages/Dashboard';
+import History from './pages/History';
+import AiCoach from './pages/AiCoach';
+import Settings from './pages/Settings';
+
 
 export default function App() {
   return (
