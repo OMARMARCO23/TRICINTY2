@@ -9,9 +9,7 @@ export default function AiCoach() {
   const [loading, setLoading] = useState(false);
   const endRef = useRef(null);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory, loading]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatHistory, loading]);
 
   const send = async (e) => {
     e.preventDefault();
@@ -76,13 +74,7 @@ export default function AiCoach() {
         <div ref={endRef} />
       </div>
       <form onSubmit={send} className="p-2 bg-base-100 flex gap-2">
-        <input
-          className="input input-bordered w-full"
-          placeholder="Ask how to reduce your bill..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={loading}
-        />
+        <input className="input input-bordered w-full" placeholder="Ask how to reduce your bill..." value={input} onChange={(e) => setInput(e.target.value)} disabled={loading} />
         <button className="btn btn-primary" type="submit" disabled={loading}>
           {loading ? <Loader className="animate-spin" /> : <Send />}
         </button>
