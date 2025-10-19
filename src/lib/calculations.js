@@ -7,19 +7,19 @@ export const TARIFF_PRESETS = {
       { upTo: 200, price: 1.0740 },
       { upTo: 300, price: 1.2827 },
       { upTo: 500, price: 1.4915 },
-      { upTo: Infinity, price: 1.6994 },
-    ],
+      { upTo: Infinity, price: 1.6994 }
+    ]
   },
   FR: { currency: "EUR", tiers: [{ upTo: Infinity, price: 0.25 }] },
-  US: { currency: "USD", tiers: [{ upTo: Infinity, price: 0.18 }] },
+  US: { currency: "USD", tiers: [{ upTo: Infinity, price: 0.18 }] }
 };
 
-export function calculateBill(kwh, tariffs) {
+// Progressive block billing (tiered)
+export function calculateBillProgressive(kwh, tariffs) {
   if (!tariffs || !tariffs.tiers) return { bill: "0.00", currency: "USD" };
   let bill = 0;
   let remaining = Math.max(0, kwh);
   let lastUpTo = 0;
-
   for (const tier of tariffs.tiers) {
     const range = tier.upTo - lastUpTo;
     if (remaining <= 0) break;
@@ -31,88 +31,92 @@ export function calculateBill(kwh, tariffs) {
   return { bill: bill.toFixed(2), currency: tariffs.currency };
 }
 
+// Whole-tier billing (all kWh at the tier price where total falls)
+export function calculateBillWholeTier(kwh, tariffs) {
+  if (!tariffs || !tariffs.tiers) return { bill: "0.00", currency: "USD" };
+  const total = Math.max(0, kwh);
+  let price = tariffs.tiers[tariffs.tiers.length - 1].price;
+  for (const t of tariffs.tiers) {
+    if (total <= t.upTo) { price = t.price; break; }
+  }
+  const bill = total * price;
+  return { bill: bill.toFixed(2), currency: tariffs.currency };
+}
+
+export function calculateBillByMode(kwh, tariffs, mode = "progressive") {
+  return mode === "whole-tier"
+    ? calculateBillWholeTier(kwh, tariffs)
+    : calculateBillProgressive(kwh, tariffs);
+}
+
 export function getMonthBoundaries(date = new Date()) {
   const start = new Date(date.getFullYear(), date.getMonth(), 1);
   const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
   return { start, end, daysInMonth: end.getDate(), daysSoFar: date.getDate() };
 }
 
-// Trend-based daily kWh using this month's entries.
-// We take per-interval rates (delta kWh / delta days) and compute a recency-weighted average.
-// Fallback: raw average since first in-month reading.
+// Linear regression-based trend (kWh/day) from counter readings this month
 export function computeTrendDailyKwh(readings, now = new Date()) {
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
   const { start, daysInMonth, daysSoFar } = getMonthBoundaries(now);
+  const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
 
   if (!Array.isArray(readings) || readings.length === 0) {
-    return {
-      currentUsage: 0,
-      rawAvgDaily: 0,
-      trendDaily: 0,
-      predictedUsage: 0,
-      daysInMonth,
-      daysSoFar,
-      daysLeft: Math.max(daysInMonth - daysSoFar, 0),
-    };
+    return { currentUsage: 0, rawAvgDaily: 0, trendDaily: 0, predictedUsage: 0, daysInMonth, daysSoFar, daysLeft };
   }
 
-  // Sort readings by date
   const sorted = [...readings].sort((a, b) => new Date(a.date) - new Date(b.date));
   const monthReadings = sorted.filter(r => new Date(r.date) >= start);
 
-  const firstInMonth = monthReadings[0] || sorted[0];
-  const lastReading = sorted[sorted.length - 1];
-
-  const firstVal = firstInMonth?.value ?? 0;
-  const lastVal = lastReading?.value ?? firstVal;
-
-  const currentUsage = Math.max(0, lastVal - firstVal);
-
-  const firstDate = new Date(firstInMonth?.date || now);
-  const elapsedDays = Math.max(1, (now - firstDate) / MS_PER_DAY);
-  const rawAvgDaily = currentUsage / elapsedDays;
-
-  // Build interval rates only within this month
-  const intervals = [];
-  for (let i = 1; i < monthReadings.length; i++) {
-    const prev = monthReadings[i - 1];
-    const curr = monthReadings[i];
-    const dKwh = curr.value - prev.value;
-    const dDays = Math.max( (new Date(curr.date) - new Date(prev.date)) / MS_PER_DAY, 0 );
-    if (dKwh >= 0 && dDays > 0) {
-      intervals.push(dKwh / dDays);
-    }
+  if (monthReadings.length === 0) {
+    return { currentUsage: 0, rawAvgDaily: 0, trendDaily: 0, predictedUsage: 0, daysInMonth, daysSoFar, daysLeft };
   }
 
-  let trendDaily;
-  if (intervals.length === 0) {
-    trendDaily = rawAvgDaily; // fallback
-  } else {
-    // Recency-weighted average: newer intervals weigh more
-    let wsum = 0, wtotal = 0;
-    for (let i = 0; i < intervals.length; i++) {
-      const w = i + 1;
-      wsum += w * intervals[i];
-      wtotal += w;
-    }
-    trendDaily = wsum / wtotal;
+  const first = monthReadings[0];
+  const firstVal = first.value;
+  const firstDate = new Date(first.date);
+  const lastVal = sorted[sorted.length - 1].value;
+  const nowVal = Math.max(0, lastVal - firstVal);
+
+  const elapsedDays = Math.max(1e-6, (now - firstDate) / MS_PER_DAY);
+  const rawAvgDaily = nowVal / elapsedDays;
+
+  // Regression points relative to first in-month reading
+  const xs = [], ys = [];
+  for (const r of monthReadings) {
+    const x = Math.max(0, (new Date(r.date) - firstDate) / MS_PER_DAY);
+    const y = Math.max(0, r.value - firstVal);
+    xs.push(x); ys.push(y);
   }
 
-  const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
-  const predictedUsage = currentUsage + trendDaily * daysLeft;
+  let slope = rawAvgDaily;
+  if (xs.length >= 2) {
+    const n = xs.length;
+    const sumX = xs.reduce((a, b) => a + b, 0);
+    const sumY = ys.reduce((a, b) => a + b, 0);
+    const sumXY = xs.reduce((a, x, i) => a + x * ys[i], 0);
+    const sumXX = xs.reduce((a, x) => a + x * x, 0);
+    const denom = n * sumXX - sumX * sumX;
+    if (denom > 1e-9) slope = (n * sumXY - sumX * sumY) / denom; // kWh/day
+  }
+  slope = Math.max(0, slope);
+
+  // Predict full-month usage with trend (slope × total days)
+  let predictedUsage = slope * daysInMonth;
+  predictedUsage = Math.max(predictedUsage, nowVal); // never below current measured
 
   return {
-    currentUsage,
+    currentUsage: nowVal,
     rawAvgDaily,
-    trendDaily,
+    trendDaily: slope,
     predictedUsage,
     daysInMonth,
     daysSoFar,
-    daysLeft,
+    daysLeft
   };
 }
 
-// How many kWh remain until the next price tier boundary (based on monthly kWh)
+// kWh until next price tier (based on current month usage)
 export function kwhToNextTier(currentKwh, tariffs) {
   const tiers = tariffs?.tiers || [];
   const kwh = Math.max(0, currentKwh);
@@ -124,19 +128,18 @@ export function kwhToNextTier(currentKwh, tariffs) {
   return Infinity;
 }
 
-// kWh allowed for a given budget with the provided tariffs (binary search)
+// Budget helpers
 export function kwhForBudget(budget, tariffs) {
   if (!budget || !tariffs) return 0;
-  let lo = 0, hi = 100000; // upper bound for month
+  let lo = 0, hi = 100000;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
-    const { bill } = calculateBill(mid, tariffs);
+    const { bill } = calculateBillProgressive(mid, tariffs);
     if (parseFloat(bill) > budget) hi = mid; else lo = mid;
   }
   return lo;
 }
 
-// Daily target for the remainder of the month to stay under budget
 export function dailyTargetForBudget(budget, tariffs, daysInMonth, consumedKwhSoFar, dayOfMonth) {
   if (!budget || !tariffs) return { dailyTarget: 0, remainingKwhAllowed: 0, remainingDays: 0 };
   const remainingDays = Math.max(daysInMonth - dayOfMonth, 0);
@@ -150,11 +153,11 @@ export function dailyTargetForBudget(budget, tariffs, daysInMonth, consumedKwhSo
   };
 }
 
-// Simple forecast band (±10% by default). Replace with variance-based band later if you want.
-export function forecastBand(predictedUsage, tariffs, band = 0.10) {
+// Forecast band (±10%)
+export function forecastBand(predictedUsage, tariffs, mode = "progressive", band = 0.10) {
   const lowUsage = Math.max(0, predictedUsage * (1 - band));
   const highUsage = Math.max(0, predictedUsage * (1 + band));
-  const { bill: low } = calculateBill(lowUsage, tariffs);
-  const { bill: high } = calculateBill(highUsage, tariffs);
-  return { low, high };
+  const lowBill = calculateBillByMode(lowUsage, tariffs, mode).bill;
+  const highBill = calculateBillByMode(highUsage, tariffs, mode).bill;
+  return { low: lowBill, high: highBill };
 }
