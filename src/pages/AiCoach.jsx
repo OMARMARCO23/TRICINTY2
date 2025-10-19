@@ -1,6 +1,11 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
-import { calculateBill, getMonthBoundaries } from '../lib/calculations.js';
+import {
+  calculateBill,
+  getMonthBoundaries,
+  kwhToNextTier,
+  dailyTargetForBudget
+} from '../lib/calculations.js';
 import { Loader, Send } from 'lucide-react';
 
 export default function AiCoach() {
@@ -9,7 +14,9 @@ export default function AiCoach() {
   const [loading, setLoading] = useState(false);
   const endRef = useRef(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatHistory, loading]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, loading]);
 
   const send = async (e) => {
     e.preventDefault();
@@ -21,8 +28,9 @@ export default function AiCoach() {
     setInput('');
     setLoading(true);
 
+    // Prepare usage data with richer context
     const { start, daysSoFar, daysInMonth } = getMonthBoundaries();
-    const readingsThisMonth = readings.filter(r => new Date(r.date) >= start);
+    const readingsThisMonth = readings.filter((r) => new Date(r.date) >= start);
     const firstValue = readingsThisMonth[0]?.value ?? readings[0]?.value ?? 0;
     const last = readings[readings.length - 1]?.value ?? firstValue;
     const currentUsage = Math.max(last - firstValue, 0);
@@ -31,11 +39,25 @@ export default function AiCoach() {
     const predictedUsage = avgDaily * daysInMonth;
     const predicted = calculateBill(predictedUsage, settings.tariffs);
 
+    const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
+    const toNextTier = kwhToNextTier(currentUsage, settings.tariffs);
+    const { dailyTarget } = dailyTargetForBudget(
+      Number(settings.goal) || 0,
+      settings.tariffs,
+      daysInMonth,
+      currentUsage,
+      daysSoFar
+    );
+
     const usageData = {
       avgDailyUsage: avgDaily.toFixed(2),
       currentUsage: currentUsage.toFixed(2),
       predictedBill: `${predicted.bill} ${predicted.currency}`,
-      goal: `${settings.goal} ${settings.tariffs.currency}`
+      goal: `${settings.goal} ${settings.tariffs.currency}`,
+      currency: settings.tariffs.currency,
+      daysLeft,
+      kwhToNextTier: isFinite(toNextTier) ? Number(toNextTier.toFixed(0)) : 'Infinity',
+      dailyTarget
     };
 
     try {
@@ -47,10 +69,10 @@ export default function AiCoach() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'AI error');
       const aiMsg = { role: 'model', parts: [{ text: data.message }] };
-      setChatHistory(prev => [...prev, aiMsg]);
+      setChatHistory((prev) => [...prev, aiMsg]);
     } catch (err) {
       const fallback = { role: 'model', parts: [{ text: err?.message || "Sorry, I couldn't connect. Try again later." }] };
-      setChatHistory(prev => [...prev, fallback]);
+      setChatHistory((prev) => [...prev, fallback]);
     } finally {
       setLoading(false);
     }
@@ -74,7 +96,13 @@ export default function AiCoach() {
         <div ref={endRef} />
       </div>
       <form onSubmit={send} className="p-2 bg-base-100 flex gap-2">
-        <input className="input input-bordered w-full" placeholder="Ask how to reduce your bill..." value={input} onChange={(e) => setInput(e.target.value)} disabled={loading} />
+        <input
+          className="input input-bordered w-full"
+          placeholder="Ask how to reduce your bill..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          disabled={loading}
+        />
         <button className="btn btn-primary" type="submit" disabled={loading}>
           {loading ? <Loader className="animate-spin" /> : <Send />}
         </button>
