@@ -59,7 +59,8 @@ export function getMonthBoundaries(date = new Date()) {
 }
 
 // Linear trend from counter readings within current month
-// Uses slope (kWh/day) from linear regression, and forecasts: usage_so_far + slope * days_left
+// slope (kWh/day) from linear regression on in-month readings.
+// Forecast: usage_so_far + slope * days_left
 export function computeTrendDailyKwh(readings, now = new Date()) {
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
   const { start, end, daysInMonth, daysSoFar } = getMonthBoundaries(now);
@@ -76,20 +77,17 @@ export function computeTrendDailyKwh(readings, now = new Date()) {
   }
 
   const first = monthReadings[0];
-  const lastInMonth = monthReadings[monthReadings.length - 1];
-
   const firstVal = Number(first.value) || 0;
+  const firstDate = new Date(first.date);
+  const lastInMonth = monthReadings[monthReadings.length - 1];
   const lastVal = Number(lastInMonth.value) || firstVal;
 
-  // Usage so far in this month (never negative)
-  const nowVal = Math.max(0, lastVal - firstVal);
+  const nowVal = Math.max(0, lastVal - firstVal); // usage so far this month
 
-  // Avg daily since the first in-month reading until now
-  const firstDate = new Date(first.date);
   const spanToNowDays = Math.max(1e-6, (now - firstDate) / MS_PER_DAY);
   const rawAvgDaily = nowVal / spanToNowDays;
 
-  // Linear regression within the month (relative to first)
+  // Regression relative to first in-month reading
   const xs = [], ys = [];
   for (const r of monthReadings) {
     const x = Math.max(0, (new Date(r.date) - firstDate) / MS_PER_DAY);
@@ -105,16 +103,11 @@ export function computeTrendDailyKwh(readings, now = new Date()) {
     const sumXY = xs.reduce((a, x, i) => a + x * ys[i], 0);
     const sumXX = xs.reduce((a, x) => a + x * x, 0);
     const denom = n * sumXX - sumX * sumX;
-    if (denom > 1e-9) {
-      slope = Math.max(0, (n * sumXY - sumX * sumY) / denom); // kWh/day
-    }
+    if (denom > 1e-9) slope = Math.max(0, (n * sumXY - sumX * sumY) / denom);
   }
 
-  // Forecast usage for end of month: usage_so_far + slope * days_left
   let predictedUsage = nowVal + slope * daysLeft;
-  if (!Number.isFinite(predictedUsage) || predictedUsage < nowVal) {
-    predictedUsage = nowVal;
-  }
+  if (!Number.isFinite(predictedUsage) || predictedUsage < nowVal) predictedUsage = nowVal;
 
   return {
     currentUsage: nowVal,
@@ -127,7 +120,48 @@ export function computeTrendDailyKwh(readings, now = new Date()) {
   };
 }
 
-// kWh remaining to next price tier (from current month usage)
+// Daily increments within the month: delta kWh and rate (kWh/day)
+export function dailyIncrements(readings) {
+  const { start } = getMonthBoundaries(new Date());
+  const monthReadings = [...(readings || [])]
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .filter(r => new Date(r.date) >= start);
+
+  const MS_PER_DAY = 1000 * 60 * 60 * 24;
+  const out = [];
+  for (let i = 1; i < monthReadings.length; i++) {
+    const prev = monthReadings[i - 1];
+    const curr = monthReadings[i];
+    const dKwh = Math.max(0, (Number(curr.value) || 0) - (Number(prev.value) || 0));
+    const dDays = Math.max(1e-6, (new Date(curr.date) - new Date(prev.date)) / MS_PER_DAY);
+    out.push({
+      date: new Date(curr.date),
+      deltaKwh: dKwh,
+      days: dDays,
+      rate: dKwh / dDays
+    });
+  }
+  return out;
+}
+
+// Spike detection: compare last interval rate vs baseline of previous up to 3 intervals
+export function detectSpike(readings) {
+  const inc = dailyIncrements(readings);
+  const n = inc.length;
+  if (n === 0) return { isSpike: false, lastRate: 0, baselineRate: 0, changePct: 0 };
+  const lastRate = inc[n - 1].rate;
+  const prevRates = inc.slice(Math.max(0, n - 4), n - 1).map(x => x.rate);
+  const baseline = prevRates.length ? prevRates.reduce((a, b) => a + b, 0) / prevRates.length : lastRate;
+  const changePct = baseline > 0 ? ((lastRate - baseline) / baseline) * 100 : (lastRate > 0 ? 100 : 0);
+  return {
+    isSpike: changePct >= 25, // 25% increase threshold
+    lastRate,
+    baselineRate: baseline,
+    changePct
+  };
+}
+
+// kWh to next price tier (based on current usage this month)
 export function kwhToNextTier(currentKwh, tariffs) {
   const tiers = tariffs?.tiers || [];
   const kwh = Number.isFinite(currentKwh) ? Math.max(0, currentKwh) : 0;
