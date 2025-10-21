@@ -31,8 +31,46 @@ async function callModel(model, prompt, apiKey) {
   return txt;
 }
 
+async function listModels(apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`;
+  const resp = await fetch(url);
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(json?.error?.message || "Failed to list models");
+  return Array.isArray(json?.models) ? json.models : [];
+}
+
+async function pickAvailableModel(apiKey) {
+  // Try known good v1 models first
+  const tryList = [
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash-002",
+    "gemini-1.5-flash",
+    "gemini-1.0-pro"
+  ];
+  for (const m of tryList) {
+    try {
+      // quick dry-run with a tiny prompt to validate model
+      await callModel(m, "ping", apiKey);
+      return m;
+    } catch {
+      continue;
+    }
+  }
+
+  // Fallback: query available models and pick one that supports generateContent
+  const models = await listModels(apiKey);
+  // Prefer flash, then pro
+  const candidates = models
+    .filter(m => (m.supportedGenerationMethods || m.generationMethods || []).includes("generateContent"))
+    .map(m => m.name?.replace(/^models\//, ""));
+
+  const pref = candidates.find(n => /flash/i.test(n)) || candidates.find(n => /pro/i.test(n)) || candidates[0];
+  if (!pref) throw new Error("No model supporting generateContent found for this API key");
+  return pref;
+}
+
 export default async function handler(req, res) {
-  // Optional CORS for future multi-origin use
+  // CORS preflight
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -68,6 +106,7 @@ Current month status:
 - Daily target to stay under goal: ${usageData?.dailyTarget ?? 'N/A'} kWh
 - kWh left before next price tier: ${usageData?.kwhToNextTier}
 - Currency: ${usageData?.currency}
+- Spike detection (if present): lastRate=${usageData?.lastRate || 'N/A'} kWh/day vs baseline=${usageData?.baselineRate || 'N/A'} kWh/day (change=${usageData?.changePct || 'N/A'}%)
 
 Conversation so far: ${JSON.stringify(chatHistory || [])}
 
@@ -79,28 +118,15 @@ Guidelines:
 - No markdown, plain sentences only.
 `;
 
-    // Try in order. v1 supports these. We fall back if a model is not enabled for the key/region.
-    const models = [
-      "gemini-1.5-flash",
-      "gemini-1.5-flash-8b",
-      "gemini-1.5-pro"
-    ];
-
-    let answer = "";
-    let lastErr = null;
-    for (const m of models) {
-      try {
-        answer = await callModel(m, prompt, apiKey);
-        break;
-      } catch (e) {
-        lastErr = e;
-        continue;
-      }
-    }
-    if (!answer) {
-      return res.status(502).json({ code: "MODEL_ERROR", message: `AI error: ${lastErr?.message || "Unknown"}` });
+    let model;
+    try {
+      model = await pickAvailableModel(apiKey);
+    } catch (e) {
+      // fallback hard default
+      model = "gemini-1.5-flash-latest";
     }
 
+    const answer = await callModel(model, prompt, apiKey);
     return res.status(200).json({ message: answer });
   } catch (err) {
     return res.status(500).json({ code: "AI_ERROR", message: `AI error: ${err?.message || "Unknown"}` });
