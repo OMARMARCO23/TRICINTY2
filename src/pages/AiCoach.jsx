@@ -4,32 +4,59 @@ import {
   calculateBillByMode,
   computeTrendDailyKwh,
   kwhToNextTier,
-  dailyTargetForBudget
+  dailyTargetForBudget,
+  detectSpike
 } from '../lib/calculations.js';
-import { Loader, Send } from 'lucide-react';
+import { Loader, Send, Sparkles, FileText } from 'lucide-react';
+import BillScanner from '../components/BillScanner.jsx';
+
+// Detect if running inside native Capacitor app
+const IS_NATIVE =
+  typeof window !== 'undefined' &&
+  window.location &&
+  window.location.protocol === 'capacitor:';
+
+// IMPORTANT: replace with your deployed domain so AI works inside Android app
+// Example: 'https://tricinty.vercel.app'
+const API_BASE = IS_NATIVE ? 'https://YOUR-VERCEL-APP.vercel.app' : '';
 
 export default function AiCoach() {
   const { readings, settings, chatHistory, setChatHistory } = useContext(AppContext);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [billOpen, setBillOpen] = useState(false);
   const endRef = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, loading]);
 
+  const quickPrompts = [
+    "Why did my consumption increase this week?",
+    "Give me 3 low-cost tips to lower my bill.",
+    "How to stay under my monthly goal?",
+    "What could be using the most energy at home?"
+  ];
+
   const send = async (e) => {
     e.preventDefault();
     if (!input.trim() || loading) return;
 
-    const userMsg = { role: 'user', parts: [{ text: input }] };
+    const userMsg = { role: 'user', parts: [{ text: input.trim() }] };
     const newHistory = [...chatHistory, userMsg];
     setChatHistory(newHistory);
     setInput('');
     setLoading(true);
 
-    const { currentUsage, rawAvgDaily, trendDaily, predictedUsage, daysInMonth, daysSoFar, daysLeft } =
-      computeTrendDailyKwh(readings);
+    const {
+      currentUsage,
+      rawAvgDaily,
+      trendDaily,
+      predictedUsage,
+      daysInMonth,
+      daysSoFar,
+      daysLeft
+    } = computeTrendDailyKwh(readings);
 
     const predicted = calculateBillByMode(predictedUsage, settings.tariffs, settings.tariffMode);
     const toNextTier = kwhToNextTier(currentUsage, settings.tariffs);
@@ -41,6 +68,11 @@ export default function AiCoach() {
       daysSoFar
     );
 
+    const spike = detectSpike(readings);
+    const lastRate = Number((spike.lastRate || 0).toFixed(2));
+    const baselineRate = Number((spike.baselineRate || 0).toFixed(2));
+    const changePct = Number((spike.changePct || 0).toFixed(1));
+
     const usageData = {
       avgDailyUsage: trendDaily.toFixed(2),
       avgDailyTrend: trendDaily.toFixed(2),
@@ -51,21 +83,25 @@ export default function AiCoach() {
       currency: settings.tariffs.currency,
       daysLeft,
       kwhToNextTier: Number.isFinite(toNextTier) ? Number(toNextTier.toFixed(0)) : 'Infinity',
-      dailyTarget
+      dailyTarget,
+      lastRate,
+      baselineRate,
+      changePct
     };
 
     try {
-      const res = await fetch('/api/ai', {
+      const res = await fetch(`${API_BASE}/api/ai`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatHistory: newHistory, usageData, language: settings.language })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'AI error');
+
       const aiMsg = { role: 'model', parts: [{ text: data.message }] };
       setChatHistory((prev) => [...prev, aiMsg]);
     } catch (err) {
-      const fallback = { role: 'model', parts: [{ text: (err?.message || "AI is unavailable. Please try again shortly.") }] };
+      const fallback = { role: 'model', parts: [{ text: err?.message || "AI is unavailable. Please try again shortly." }] };
       setChatHistory((prev) => [...prev, fallback]);
     } finally {
       setLoading(false);
@@ -74,11 +110,33 @@ export default function AiCoach() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
+      {/* Bill scan action */}
+      <div className="p-2 flex items-center gap-2">
+        <button className="btn btn-outline btn-sm" onClick={() => setBillOpen(true)}>
+          <FileText size={16} /> <span className="ml-1">Scan Bill (OCR)</span>
+        </button>
+      </div>
+
+      {/* Quick prompts */}
+      <div className="p-2 flex flex-wrap gap-2">
+        {quickPrompts.map((q, i) => (
+          <button
+            key={i}
+            className="btn btn-xs btn-outline"
+            onClick={() => { setInput(q); setTimeout(() => send(new Event('submit')), 0); }}
+            disabled={loading}
+          >
+            <Sparkles size={14} /> <span className="ml-1">{q}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Chat */}
       <div className="flex-grow p-2 space-y-3 overflow-y-auto">
         {chatHistory.map((m, i) => (
           <div key={i} className={`chat ${m.role === 'user' ? 'chat-end' : 'chat-start'}`}>
             <div className={`chat-bubble ${m.role === 'user' ? 'chat-bubble-primary' : ''}`}>
-              {m.parts[0].text}
+              {m.parts?.[0]?.text || ''}
             </div>
           </div>
         ))}
@@ -89,6 +147,8 @@ export default function AiCoach() {
         )}
         <div ref={endRef} />
       </div>
+
+      {/* Input bar */}
       <form onSubmit={send} className="p-2 bg-base-100 flex gap-2">
         <input
           className="input input-bordered w-full"
@@ -101,6 +161,27 @@ export default function AiCoach() {
           {loading ? <Loader className="animate-spin" /> : <Send />}
         </button>
       </form>
+
+      {/* Bill Scanner Modal */}
+      <dialog id="scan_bill_modal" className={`modal ${billOpen ? 'modal-open' : ''}`}>
+        <div className="modal-box">
+          <h3 className="font-bold text-lg">Scan your bill</h3>
+          <BillScanner
+            onParsed={(parsed, rawText) => {
+              // Optional: you could push a message into chat with a summary
+              if (parsed?.totalAmount || parsed?.totalKwh) {
+                const summary = `Bill scan: ${parsed.provider || '—'}, ${parsed.periodStart || '—'} → ${parsed.periodEnd || '—'}, ` +
+                  `kWh ${parsed.totalKwh ?? '—'}, amount ${parsed.totalAmount ?? '—'} ${parsed.currency || ''}.`;
+                setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: summary }] }]);
+              }
+            }}
+            onClose={() => setBillOpen(false)}
+          />
+          <div className="modal-action">
+            <button className="btn" onClick={() => setBillOpen(false)}>Close</button>
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }
