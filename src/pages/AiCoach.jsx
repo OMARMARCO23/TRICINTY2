@@ -10,7 +10,13 @@ import {
 import { Loader, Send, Sparkles, FileText } from 'lucide-react';
 import BillScanner from '../components/BillScanner.jsx';
 import { tFactory } from '../i18n/index.js';
-import { API_BASE } from '../config.js';
+
+// Inline API base to avoid Rollup resolving wrong config file
+const IS_NATIVE =
+  typeof window !== 'undefined' &&
+  window.location &&
+  window.location.protocol === 'capacitor:';
+const API_BASE = IS_NATIVE ? 'https://YOUR-VERCEL-APP.vercel.app' : '';
 
 export default function AiCoach() {
   const { readings, settings, chatHistory, setChatHistory } = useContext(AppContext);
