@@ -13,7 +13,6 @@ export default async function handler(req, res) {
     const apiKey = process.env.OCR_SPACE_API_KEY || 'helloworld';
 
     // Map app language -> OCR.space code
-    // OCR.space common: eng, fre, ara
     const ocrLang = language === 'fr' ? 'fre' : language === 'ar' ? 'ara' : 'eng';
 
     const form = new URLSearchParams();
@@ -39,7 +38,6 @@ export default async function handler(req, res) {
         json?.ErrorDetails ||
         'OCR provider error';
 
-      // Friendly messages for common cases
       if (String(err).toLowerCase().includes('apikey')) {
         return res.status(401).json({ message: 'OCR API key invalid. Set OCR_SPACE_API_KEY in Vercel.' });
       }
