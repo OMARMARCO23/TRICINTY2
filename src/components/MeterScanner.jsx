@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { Upload, Camera, Loader2, RotateCcw } from 'lucide-react';
+import { API_BASE } from '../config.js';
+import { AppContext } from '../contexts/AppContext.jsx';
 
-// Digit extractor
+// Simple digit extractor
 function extractBestNumberFromText(text, { minDigits = 4, preferBiggerThan } = {}) {
   if (!text) return null;
   const candidates = Array.from(text.matchAll(/[\d][\d\s.,]{3,15}/g))
@@ -56,7 +58,7 @@ async function buildCroppedDataUrl(img, crop, targetWidth = 900, quality = 0.85)
   }
   ctx.putImageData(imgData, 0, 0);
 
-  return c.toDataURL('image/jpeg', quality); // small enough for serverless
+  return c.toDataURL('image/jpeg', quality); // small payload for serverless
 }
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
@@ -72,6 +74,8 @@ function fileToImage(file) {
 }
 
 export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
+  const { settings } = useContext(AppContext);
+
   const [photoUrl, setPhotoUrl] = useState('');
   const [photoImg, setPhotoImg] = useState(null);
   const [processedUrl, setProcessedUrl] = useState('');
@@ -108,7 +112,7 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
       setRecognized('');
       setProcessedUrl('');
       setStatus('Photo loaded. Adjust crop if needed, then Analyze.');
-    } catch (e) {
+    } catch {
       setStatus('Failed to read photo.');
     } finally {
       setLoading(false);
@@ -127,10 +131,11 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
       setProcessedUrl(dataUrl);
 
       setStatus('Recognizing...');
-      const resp = await fetch('/api/ocr', {
+      const resp = await fetch(`${API_BASE}/api/ocr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl })
+        // send app language (eng/fre/ara mapping is done in the API)
+        body: JSON.stringify({ dataUrl, language: settings.language })
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data?.message || 'OCR error');
@@ -139,7 +144,7 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
       const best = extractBestNumberFromText(text, { preferBiggerThan: lastReading });
       if (!best) {
         setRecognized('');
-        setStatus('No digits found. Try adjusting crop or taking a closer photo.');
+        setStatus('No digits found. Try a tighter crop or better lighting.');
       } else {
         setRecognized(String(best.num));
         setStatus('');
@@ -183,7 +188,7 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         </div>
       )}
 
-      {/* Controls */}
+      {/* Crop controls */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label"><span className="label-text">Crop X</span></label>
@@ -223,7 +228,7 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
       {/* Analyze */}
       <button className="btn btn-accent w-full" onClick={analyze} disabled={loading || !photoImg}>
         {loading ? <Loader2 className="animate-spin" size={16} /> : null}
-        <span className="ml-2">{loading ? 'Analyzing...' : 'Analyze (Fast Cloud OCR)'}</span>
+        <span className="ml-2">{loading ? 'Analyzing...' : 'Analyze'}</span>
       </button>
 
       {/* Status */}
