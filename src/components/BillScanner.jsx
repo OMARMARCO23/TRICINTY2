@@ -1,50 +1,73 @@
-import { useState } from 'react';
-import { ocrImage, initOcr } from '../lib/ocr.js';
+import { useContext, useState } from 'react';
+import { AppContext } from '../contexts/AppContext.jsx';
 import { FileText, Upload, Loader2 } from 'lucide-react';
 
+function fileToImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => resolve({ img, url });
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 export default function BillScanner({ onParsed, onClose }) {
+  const { settings } = useContext(AppContext);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
-  const [progress, setProgress] = useState(0);
   const [preview, setPreview] = useState('');
+  const [dataUrl, setDataUrl] = useState('');
   const [result, setResult] = useState(null);
 
   const handleFile = async (file) => {
     if (!file) return;
-    setPreview(URL.createObjectURL(file));
     setLoading(true);
-    setStatus('Loading OCR...');
-    setProgress(0);
+    setStatus('Loading photo...');
     try {
-      // Initialize with multi-lang if you expect FR/AR terms on bills
-      await initOcr({
-        langs: 'eng+fra',
-        whitelist: undefined,
-        onProgress: (m) => {
-          setStatus(m.status);
-          setProgress(Math.round((m.progress || 0) * 100));
-        }
-      });
+      const { img, url } = await fileToImage(file);
+      setPreview(url);
 
-      setStatus('Reading photo...');
-      const img = await fileToImage(file);
-
-      setStatus('Recognizing...');
-      const data = await ocrImage(img, {
-        langs: 'eng+fra',
-        onProgress: (m) => {
-          setStatus(m.status || 'Recognizing...');
-          setProgress(Math.round((m.progress || 0) * 100));
-        }
-      });
-
-      const parsed = parseBillText(data.text || '');
-      setResult({ text: data.text, parsed });
-      onParsed?.(parsed, data.text);
-      setStatus('');
-      setProgress(0);
+      // Compress to ~1000px for speed
+      const c = document.createElement('canvas');
+      const maxW = 1200;
+      const ratio = (img.naturalWidth || img.width) / (img.naturalHeight || img.height);
+      c.width = Math.min(maxW, img.naturalWidth || img.width);
+      c.height = Math.round(c.width / ratio);
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const du = c.toDataURL('image/jpeg', 0.85);
+      setDataUrl(du);
+      setStatus('Ready. Press Analyze.');
     } catch (e) {
-      setStatus('Bill OCR failed. Try a sharper photo under good light.');
+      setStatus('Failed to read photo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const analyze = async () => {
+    if (!dataUrl) {
+      setStatus('Select a photo first.');
+      return;
+    }
+    setLoading(true);
+    setStatus('Recognizing...');
+    try {
+      const resp = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl, language: settings.language })
+      });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json?.message || 'OCR error');
+      const text = String(json?.text || '');
+      const parsed = parseBillText(text);
+      setResult({ text, parsed });
+      onParsed?.(parsed, text);
+      setStatus('');
+    } catch (e) {
+      setStatus(e?.message || 'Bill OCR failed.');
     } finally {
       setLoading(false);
     }
@@ -68,12 +91,12 @@ export default function BillScanner({ onParsed, onClose }) {
         </div>
       )}
 
-      {(loading || status) && (
-        <div className="text-xs opacity-80 flex items-center gap-2">
-          {loading && <Loader2 size={14} className="animate-spin" />}
-          <span>{status} {progress ? `• ${progress}%` : ''}</span>
-        </div>
-      )}
+      <button className="btn btn-accent w-full" onClick={analyze} disabled={loading || !dataUrl}>
+        {loading ? <Loader2 className="animate-spin" size={16} /> : null}
+        <span className="ml-2">{loading ? 'Analyzing...' : 'Analyze'}</span>
+      </button>
+
+      {status && <div className="text-xs opacity-80">{status}</div>}
 
       {result?.parsed && (
         <div className="text-sm space-y-1">
@@ -95,7 +118,7 @@ function parseBillText(text) {
 
   const amountMatch = currency
     ? t.match(new RegExp(`(?:${currency}\\s*([\\d.,]+))|(?:([\\d.,]+)\\s*${currency})`, 'i'))
-    : t.match(/(?:total|amount|montant)\s*[:=]?\s*([\d.,]+)\b/i);
+    : t.match(/(?:total|amount|montant|montant total)\s*[:=]?\s*([\d.,]+)\b/i);
   let totalAmount = null;
   if (amountMatch) totalAmount = parseFloat((amountMatch[1] || amountMatch[2] || '').replace(',', '.'));
 
@@ -111,18 +134,4 @@ function parseBillText(text) {
   const provider = providerMatch ? providerMatch[1] : '';
 
   return { provider, periodStart, periodEnd, totalKwh, totalAmount, currency };
-}
-
-function fileToImage(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = reader.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
