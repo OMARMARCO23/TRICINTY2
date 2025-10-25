@@ -1,5 +1,4 @@
 import { useContext, useMemo, useState } from 'react';
-import { Upload, Camera, Loader2, RotateCcw } from 'lucide-react';
 import { AppContext } from '../contexts/AppContext.jsx';
 
 // Inline API base
@@ -9,7 +8,7 @@ const IS_NATIVE =
   window.location.protocol === 'capacitor:';
 const API_BASE = IS_NATIVE ? 'https://YOUR-VERCEL-APP.vercel.app' : '';
 
-// Simple digit extractor
+// Extract best number
 function extractBestNumberFromText(text, { minDigits = 4, preferBiggerThan } = {}) {
   if (!text) return null;
   const candidates = Array.from(text.matchAll(/[\d][\d\s.,]{3,15}/g))
@@ -29,7 +28,7 @@ function extractBestNumberFromText(text, { minDigits = 4, preferBiggerThan } = {
   return candidates.sort((a, b) => b.num - a.num)[0];
 }
 
-// Build cropped+compressed JPEG dataURL for OCR
+// Build cropped+compressed JPEG dataURL
 async function buildCroppedDataUrl(img, crop, targetWidth = 900, quality = 0.85) {
   const natW = img.naturalWidth || img.width;
   const natH = img.naturalHeight || img.height;
@@ -52,7 +51,6 @@ async function buildCroppedDataUrl(img, crop, targetWidth = 900, quality = 0.85)
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
 
-  // Optional: quick grayscale+threshold to help OCR provider
   const imgData = ctx.getImageData(0, 0, cw, ch);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -89,7 +87,6 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Crop controls (percent of image)
   const [cropX, setCropX] = useState(0.1);
   const [cropY, setCropY] = useState(0.35);
   const [cropW, setCropW] = useState(0.8);
@@ -181,7 +178,6 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
 
   return (
     <div className="space-y-3">
-      {/* Preview */}
       {photoUrl ? (
         <div className="relative rounded overflow-hidden border">
           <img src={photoUrl} alt="preview" className="w-full block" />
@@ -193,7 +189,6 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         </div>
       )}
 
-      {/* Crop controls */}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label"><span className="label-text">Crop X</span></label>
@@ -213,33 +208,28 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         </div>
       </div>
 
-      {/* Actions */}
       <div className="flex gap-2">
         <label className={`btn btn-primary flex-1 ${loading ? 'btn-disabled' : ''}`}>
-          <Camera size={18} /> <span className="ml-1">Take Photo</span>
+          📷 <span className="ml-1">Take Photo</span>
           <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onPick(e.target.files?.[0])} />
         </label>
 
         <label className={`btn btn-outline flex-1 ${loading ? 'btn-disabled' : ''}`}>
-          <Upload size={18} /> <span className="ml-1">Upload</span>
+          📂 <span className="ml-1">Upload</span>
           <input type="file" accept="image/*" className="hidden" onChange={(e) => onPick(e.target.files?.[0])} />
         </label>
 
         <button className="btn btn-ghost" onClick={retake} disabled={loading}>
-          <RotateCcw size={16} /> <span className="ml-1">Retake</span>
+          🔁 <span className="ml-1">Retake</span>
         </button>
       </div>
 
-      {/* Analyze */}
       <button className="btn btn-accent w-full" onClick={analyze} disabled={loading || !photoImg}>
-        {loading ? <Loader2 className="animate-spin" size={16} /> : null}
-        <span className="ml-2">{loading ? 'Analyzing...' : 'Analyze'}</span>
+        {loading ? '⏳ Analyzing...' : 'Analyze'}
       </button>
 
-      {/* Status */}
       {status && <div className="text-xs opacity-80">{status}</div>}
 
-      {/* Processed preview */}
       {processedUrl && (
         <div>
           <div className="text-xs opacity-70 mb-1">Processed region preview</div>
@@ -247,7 +237,6 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         </div>
       )}
 
-      {/* Recognized value */}
       <div className="form-control">
         <label className="label"><span className="label-text">Recognized reading</span></label>
         <input
