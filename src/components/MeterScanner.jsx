@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { initOcr, ocrImage, extractBestNumberFromText, preprocessCropToCanvas } from '../lib/ocr.js';
 import { Camera, Upload, Loader2, RotateCcw } from 'lucide-react';
 
@@ -11,22 +11,22 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
   const [videoReady, setVideoReady] = useState(false);
   const [streamErr, setStreamErr] = useState('');
 
-  const [photoUrl, setPhotoUrl] = useState(''); // preview image
-  const [photoImg, setPhotoImg] = useState(null); // Image object
+  const [photoUrl, setPhotoUrl] = useState('');
+  const [photoImg, setPhotoImg] = useState(null);
 
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState(0);
   const [recognized, setRecognized] = useState('');
 
-  // Crop controls (percentages)
+  // Crop controls
   const [cropX, setCropX] = useState(0.1);
   const [cropY, setCropY] = useState(0.35);
   const [cropW, setCropW] = useState(0.8);
   const [cropH, setCropH] = useState(0.3);
   const [threshold, setThreshold] = useState(180);
-  const [targetWidth, setTargetWidth] = useState(1000);
+  const [targetWidth, setTargetWidth] = useState(900);
 
-  // Start camera on mount
+  // Start camera when entering camera phase
   useEffect(() => {
     if (phase !== 'camera') return;
     (async () => {
@@ -48,10 +48,10 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         setStreamErr('Camera unavailable. You can upload a photo instead.');
       }
     })();
-    return () => {}; // stopped explicitly on capture
+    // Cleanup handled explicitly on capture
   }, [phase]);
 
-  // Preload OCR worker once (faster analysis later)
+  // Preload OCR once (so analyze starts fast)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -61,6 +61,7 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         await initOcr({
           langs: 'eng',
           whitelist: '0123456789.,',
+          psm: '7',
           onProgress: (m) => {
             if (!mounted) return;
             setStatus(m.status);
@@ -70,17 +71,16 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         setStatus('');
         setProgress(0);
       } catch (e) {
-        setStatus('Failed to initialize OCR.');
+        setStatus('Failed to initialize OCR. Check your connection on first run.');
       }
     })();
     return () => { mounted = false; };
   }, []);
 
   const stopStream = () => {
-    try {
-      stream?.getTracks()?.forEach(t => t.stop());
-    } catch {}
+    try { stream?.getTracks()?.forEach(t => t.stop()); } catch {}
     setStream(null);
+    setVideoReady(false);
   };
 
   const captureOnce = async () => {
@@ -91,10 +91,7 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
     try {
       setStatus('Capturing...');
       const img = await frameToImage(videoRef.current, canvasRef.current);
-      // Stop camera immediately after capture
       stopStream();
-      setVideoReady(false);
-
       const url = imageToDataUrl(img);
       setPhotoUrl(url);
       setPhotoImg(img);
@@ -113,8 +110,6 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
       setStatus('Loading photo...');
       const img = await fileToImage(file);
       stopStream();
-      setVideoReady(false);
-
       const url = imageToDataUrl(img);
       setPhotoUrl(url);
       setPhotoImg(img);
@@ -134,32 +129,40 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
     }
     try {
       setPhase('analyzing');
-      setStatus('Preprocessing...');
-      setProgress(0);
-
+      setRecognized('');
       const crop = { x: cropX, y: cropY, w: cropW, h: cropH };
-      const preCanvas = preprocessCropToCanvas(photoImg, crop, targetWidth, threshold);
 
-      setStatus('Recognizing...');
-      const data = await ocrImage(preCanvas, {
-        langs: 'eng',
-        whitelist: '0123456789.,',
-        onProgress: (m) => {
-          setStatus(m.status || 'Recognizing...');
-          if (typeof m.progress === 'number') setProgress(Math.round(m.progress * 100));
-        }
-      });
+      // Try 3 thresholds to be robust
+      const tries = uniqClamp([threshold, threshold - 30, threshold + 30], 100, 220);
+      let bestCandidate = null;
+      for (let i = 0; i < tries.length; i++) {
+        setStatus(`Preprocessing... (try ${i + 1}/${tries.length})`);
+        const preCanvas = preprocessCropToCanvas(photoImg, crop, targetWidth, tries[i]);
 
-      const best = extractBestNumberFromText(data.text, { preferBiggerThan: lastReading });
-      if (!best) {
+        setStatus(`Recognizing... (try ${i + 1}/${tries.length})`);
+        const data = await ocrImage(preCanvas, {
+          langs: 'eng',
+          whitelist: '0123456789.,',
+          psm: '7',
+          onProgress: (m) => {
+            setStatus((m.status || 'Recognizing...') + ` (try ${i + 1}/${tries.length})`);
+            if (typeof m.progress === 'number') setProgress(Math.round(m.progress * 100));
+          },
+          timeoutMs: 12000
+        });
+
+        const cand = extractBestNumberFromText(data.text, { preferBiggerThan: lastReading });
+        if (cand) { bestCandidate = cand; break; }
+      }
+
+      if (!bestCandidate) {
         setStatus('No digits found. Adjust crop/threshold and try again.');
-        setRecognized('');
       } else {
         setStatus('');
-        setRecognized(String(best.num));
+        setRecognized(String(bestCandidate.num));
       }
     } catch (e) {
-      setStatus('Analysis failed. Try again.');
+      setStatus(e?.message === 'OCR timeout' ? 'Analysis timed out. Try tighter crop or smaller scale.' : 'Analysis failed. Try again.');
     } finally {
       setPhase('preview');
       setProgress(0);
@@ -184,6 +187,19 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
     setStatus('');
     setProgress(0);
   };
+
+  // Style for crop overlay in preview (percentage-based box)
+  const cropOverlayStyle = useMemo(() => ({
+    position: 'absolute',
+    left: `${cropX * 100}%`,
+    top: `${cropY * 100}%`,
+    width: `${cropW * 100}%`,
+    height: `${cropH * 100}%`,
+    border: '2px solid rgba(255,255,255,0.9)',
+    boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)',
+    pointerEvents: 'none',
+    borderRadius: '6px'
+  }), [cropX, cropY, cropW, cropH]);
 
   return (
     <div className="space-y-3">
@@ -223,16 +239,18 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
       {phase !== 'camera' && (
         <>
           {photoUrl && (
-            <div className="rounded overflow-hidden border">
-              <img src={photoUrl} alt="preview" className="w-full" />
+            <div className="relative rounded overflow-hidden border">
+              <img src={photoUrl} alt="preview" className="w-full block" />
+              {/* Live crop overlay on the preview */}
+              <div style={cropOverlayStyle} />
             </div>
           )}
 
-          {/* Crop sliders */}
+          {/* Crop and preprocess controls */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label"><span className="label-text">Crop X</span></label>
-              <input type="range" min="0" max="0.5" step="0.01" value={cropX} onChange={e => setCropX(parseFloat(e.target.value))} className="range" />
+              <input type="range" min="0" max="0.6" step="0.01" value={cropX} onChange={e => setCropX(parseFloat(e.target.value))} className="range" />
             </div>
             <div>
               <label className="label"><span className="label-text">Crop Y</span></label>
@@ -292,7 +310,7 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
               </button>
             </div>
             <p className="text-[11px] opacity-70 mt-1">
-              Tip: Crop tightly around the digits area for best accuracy.
+              Tip: Move the crop box so it tightly frames the digits. Increase Scale width if digits look small.
             </p>
           </div>
         </>
@@ -341,4 +359,9 @@ function fileToImage(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+function uniqClamp(arr, min, max) {
+  const s = new Set(arr.map(n => Math.max(min, Math.min(max, n))));
+  return Array.from(s);
 }
