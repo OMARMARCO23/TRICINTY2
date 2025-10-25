@@ -7,11 +7,11 @@ import {
   dailyTargetForBudget,
   detectSpike
 } from '../lib/calculations.js';
-import { Loader, Send, Sparkles, FileText } from 'lucide-react';
+import { Loader2, Send, Sparkles, FileText } from 'lucide-react';
 import BillScanner from '../components/BillScanner.jsx';
 import { tFactory } from '../i18n/index.js';
 
-// Inline API base to avoid Rollup resolving wrong config file
+// Inline API base
 const IS_NATIVE =
   typeof window !== 'undefined' &&
   window.location &&
@@ -158,7 +158,7 @@ export default function AiCoach() {
           disabled={loading}
         />
         <button className="btn btn-primary" type="submit" disabled={loading}>
-          {loading ? <Loader className="animate-spin" /> : <Send />}
+          {loading ? <Loader2 className="animate-spin" /> : <Send />}
         </button>
       </form>
 
