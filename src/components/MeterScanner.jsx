@@ -1,7 +1,13 @@
 import { useContext, useMemo, useState } from 'react';
 import { Upload, Camera, Loader2, RotateCcw } from 'lucide-react';
-import { API_BASE } from '../config.js';
 import { AppContext } from '../contexts/AppContext.jsx';
+
+// Inline API base to avoid Rollup resolving wrong config file
+const IS_NATIVE =
+  typeof window !== 'undefined' &&
+  window.location &&
+  window.location.protocol === 'capacitor:';
+const API_BASE = IS_NATIVE ? 'https://YOUR-VERCEL-APP.vercel.app' : '';
 
 // Simple digit extractor
 function extractBestNumberFromText(text, { minDigits = 4, preferBiggerThan } = {}) {
@@ -52,13 +58,13 @@ async function buildCroppedDataUrl(img, crop, targetWidth = 900, quality = 0.85)
   for (let i = 0; i < d.length; i += 4) {
     const r = d[i], g = d[i + 1], b = d[i + 2];
     const gray = (r * 0.299 + g * 0.587 + b * 0.114) | 0;
-    const bin = gray > 170 ? 255 : 0; // simple binarization
+    const bin = gray > 170 ? 255 : 0;
     d[i] = d[i + 1] = d[i + 2] = bin;
     d[i + 3] = 255;
   }
   ctx.putImageData(imgData, 0, 0);
 
-  return c.toDataURL('image/jpeg', quality); // small payload for serverless
+  return c.toDataURL('image/jpeg', quality);
 }
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
@@ -134,7 +140,6 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
       const resp = await fetch(`${API_BASE}/api/ocr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // send app language (eng/fre/ara mapping is done in the API)
         body: JSON.stringify({ dataUrl, language: settings.language })
       });
       const data = await resp.json();
