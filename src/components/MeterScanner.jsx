@@ -1,29 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
-import { ocrImage, extractBestNumberFromText, initOcr } from '../lib/ocr.js';
-import { Camera, Upload, Loader2 } from 'lucide-react';
+import { initOcr, ocrImage, extractBestNumberFromText, preprocessCropToCanvas } from '../lib/ocr.js';
+import { Camera, Upload, Loader2, RotateCcw } from 'lucide-react';
 
 export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
+  const [phase, setPhase] = useState('camera'); // 'camera' | 'preview' | 'analyzing'
+  const [stream, setStream] = useState(null);
   const [videoReady, setVideoReady] = useState(false);
   const [streamErr, setStreamErr] = useState('');
-  const [processing, setProcessing] = useState(false);
+
+  const [photoUrl, setPhotoUrl] = useState(''); // preview image
+  const [photoImg, setPhotoImg] = useState(null); // Image object
+
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState(0);
-  const [recognized, setRecognized] = useState(''); // editable recognized value
+  const [recognized, setRecognized] = useState('');
 
-  // Prepare camera
+  // Crop controls (percentages)
+  const [cropX, setCropX] = useState(0.1);
+  const [cropY, setCropY] = useState(0.35);
+  const [cropW, setCropW] = useState(0.8);
+  const [cropH, setCropH] = useState(0.3);
+  const [threshold, setThreshold] = useState(180);
+  const [targetWidth, setTargetWidth] = useState(1000);
+
+  // Start camera on mount
   useEffect(() => {
-    let stream;
+    if (phase !== 'camera') return;
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: 'environment' } },
           audio: false
         });
+        setStream(s);
         if (videoRef.current) {
-          videoRef.current.srcObject = stream;
+          videoRef.current.srcObject = s;
           videoRef.current.onloadedmetadata = () => {
             setVideoReady(true);
             videoRef.current.play().catch(() => {});
@@ -34,12 +48,10 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
         setStreamErr('Camera unavailable. You can upload a photo instead.');
       }
     })();
-    return () => {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-    };
-  }, []);
+    return () => {}; // stopped explicitly on capture
+  }, [phase]);
 
-  // Preload OCR worker to avoid first-time latency after capture
+  // Preload OCR worker once (faster analysis later)
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -64,54 +76,72 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
     return () => { mounted = false; };
   }, []);
 
-  const capture = async () => {
+  const stopStream = () => {
+    try {
+      stream?.getTracks()?.forEach(t => t.stop());
+    } catch {}
+    setStream(null);
+  };
+
+  const captureOnce = async () => {
     if (!videoReady || !videoRef.current) {
-      alert('Camera not ready. Please wait a second and try again.');
+      alert('Camera not ready. Please try again.');
       return;
     }
     try {
-      setProcessing(true);
-      setStatus('Capturing frame...');
-      setProgress(0);
-
+      setStatus('Capturing...');
       const img = await frameToImage(videoRef.current, canvasRef.current);
-      setStatus('Recognizing...');
-      const data = await ocrImage(img, {
-        langs: 'eng',
-        whitelist: '0123456789.,',
-        onProgress: (m) => {
-          setStatus(m.status || 'Recognizing...');
-          if (typeof m.progress === 'number') setProgress(Math.round(m.progress * 100));
-        }
-      });
+      // Stop camera immediately after capture
+      stopStream();
+      setVideoReady(false);
 
-      const best = extractBestNumberFromText(data.text, { preferBiggerThan: lastReading });
-      if (!best) {
-        setStatus('No digits found. Try closer framing and better lighting.');
-        setProgress(0);
-        setRecognized('');
-      } else {
-        setStatus('');
-        setProgress(0);
-        setRecognized(String(best.num));
-      }
+      const url = imageToDataUrl(img);
+      setPhotoUrl(url);
+      setPhotoImg(img);
+      setPhase('preview');
+      setStatus('');
+      setProgress(0);
+      setRecognized('');
     } catch (e) {
-      setStatus('OCR failed. Try again.');
-    } finally {
-      setProcessing(false);
+      setStatus('Capture failed. Try again.');
     }
   };
 
   const onUpload = async (file) => {
     if (!file) return;
     try {
-      setProcessing(true);
-      setStatus('Reading photo...');
-      setProgress(0);
+      setStatus('Loading photo...');
       const img = await fileToImage(file);
+      stopStream();
+      setVideoReady(false);
+
+      const url = imageToDataUrl(img);
+      setPhotoUrl(url);
+      setPhotoImg(img);
+      setPhase('preview');
+      setStatus('');
+      setProgress(0);
+      setRecognized('');
+    } catch (e) {
+      setStatus('Failed to read photo.');
+    }
+  };
+
+  const analyze = async () => {
+    if (!photoImg) {
+      alert('No photo to analyze.');
+      return;
+    }
+    try {
+      setPhase('analyzing');
+      setStatus('Preprocessing...');
+      setProgress(0);
+
+      const crop = { x: cropX, y: cropY, w: cropW, h: cropH };
+      const preCanvas = preprocessCropToCanvas(photoImg, crop, targetWidth, threshold);
 
       setStatus('Recognizing...');
-      const data = await ocrImage(img, {
+      const data = await ocrImage(preCanvas, {
         langs: 'eng',
         whitelist: '0123456789.,',
         onProgress: (m) => {
@@ -122,18 +152,17 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
 
       const best = extractBestNumberFromText(data.text, { preferBiggerThan: lastReading });
       if (!best) {
-        setStatus('No digits found. Try a sharper/closer photo.');
-        setProgress(0);
+        setStatus('No digits found. Adjust crop/threshold and try again.');
         setRecognized('');
       } else {
         setStatus('');
-        setProgress(0);
         setRecognized(String(best.num));
       }
     } catch (e) {
-      setStatus('Photo OCR failed. Try again.');
+      setStatus('Analysis failed. Try again.');
     } finally {
-      setProcessing(false);
+      setPhase('preview');
+      setProgress(0);
     }
   };
 
@@ -147,71 +176,127 @@ export default function MeterScanner({ lastReading = 0, onResult, onClose }) {
     onClose?.();
   };
 
+  const retake = () => {
+    setPhotoUrl('');
+    setPhotoImg(null);
+    setRecognized('');
+    setPhase('camera');
+    setStatus('');
+    setProgress(0);
+  };
+
   return (
     <div className="space-y-3">
-      {/* Preview */}
-      <div className="relative w-full rounded overflow-hidden bg-black">
-        {streamErr ? (
-          <div className="p-4 text-center text-sm">{streamErr}</div>
-        ) : (
-          <video ref={videoRef} className="w-full h-auto" playsInline muted />
-        )}
-        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-          {/* framing guide */}
-          <div className="border-2 border-white/70 rounded px-10 py-6"></div>
-        </div>
-      </div>
+      {/* Phase: Camera */}
+      {phase === 'camera' && (
+        <>
+          <div className="relative w-full rounded overflow-hidden bg-black">
+            {streamErr ? (
+              <div className="p-4 text-center text-sm">{streamErr}</div>
+            ) : (
+              <video ref={videoRef} className="w-full h-auto" playsInline muted />
+            )}
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+              <div className="border-2 border-white/70 rounded px-10 py-6"></div>
+            </div>
+          </div>
 
-      {/* Actions */}
-      <div className="flex gap-2">
-        <button className="btn btn-primary flex-1" onClick={capture} disabled={processing}>
-          {processing ? <Loader2 size={16} className="animate-spin" /> : <Camera size={18} />}
-          <span className="ml-1">{processing ? 'Working...' : 'Capture'}</span>
-        </button>
-        <label className={`btn btn-outline flex-1 ${processing ? 'btn-disabled' : ''}`}>
-          <Upload size={18} /> <span className="ml-1">Upload</span>
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
-            disabled={processing}
-          />
-        </label>
-      </div>
-
-      {/* Progress */}
-      {(status || processing) && (
-        <div className="text-xs opacity-80">
-          {status} {progress ? `• ${progress}%` : ''}
-        </div>
+          <div className="flex gap-2">
+            <button className="btn btn-primary flex-1" onClick={captureOnce}>
+              <Camera size={18} /> <span className="ml-1">Capture</span>
+            </button>
+            <label className="btn btn-outline flex-1">
+              <Upload size={18} /> <span className="ml-1">Upload</span>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
+              />
+            </label>
+          </div>
+        </>
       )}
 
-      {/* Recognized value confirm */}
-      <div className="form-control">
-        <label className="label">
-          <span className="label-text">Recognized reading</span>
-        </label>
-        <input
-          type="number"
-          className="input input-bordered"
-          placeholder="Not recognized yet"
-          value={recognized}
-          onChange={(e) => setRecognized(e.target.value)}
-        />
-        <div className="flex gap-2 mt-2">
-          <button className="btn btn-success flex-1" onClick={confirmUse} disabled={!recognized}>
-            Use value
-          </button>
-          <button className="btn flex-1" onClick={() => setRecognized('')}>
-            Retry
-          </button>
-        </div>
-        <p className="text-[11px] opacity-70 mt-1">
-          Tip: Fill the frame with the digits only. Avoid glare and blur.
-        </p>
-      </div>
+      {/* Phase: Preview / Analyze */}
+      {phase !== 'camera' && (
+        <>
+          {photoUrl && (
+            <div className="rounded overflow-hidden border">
+              <img src={photoUrl} alt="preview" className="w-full" />
+            </div>
+          )}
+
+          {/* Crop sliders */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label"><span className="label-text">Crop X</span></label>
+              <input type="range" min="0" max="0.5" step="0.01" value={cropX} onChange={e => setCropX(parseFloat(e.target.value))} className="range" />
+            </div>
+            <div>
+              <label className="label"><span className="label-text">Crop Y</span></label>
+              <input type="range" min="0" max="0.8" step="0.01" value={cropY} onChange={e => setCropY(parseFloat(e.target.value))} className="range" />
+            </div>
+            <div>
+              <label className="label"><span className="label-text">Crop W</span></label>
+              <input type="range" min="0.3" max="1" step="0.01" value={cropW} onChange={e => setCropW(parseFloat(e.target.value))} className="range" />
+            </div>
+            <div>
+              <label className="label"><span className="label-text">Crop H</span></label>
+              <input type="range" min="0.2" max="0.8" step="0.01" value={cropH} onChange={e => setCropH(parseFloat(e.target.value))} className="range" />
+            </div>
+            <div>
+              <label className="label"><span className="label-text">Threshold</span></label>
+              <input type="range" min="100" max="220" step="1" value={threshold} onChange={e => setThreshold(parseInt(e.target.value))} className="range" />
+              <div className="text-xs opacity-70 mt-1">{threshold}</div>
+            </div>
+            <div>
+              <label className="label"><span className="label-text">Scale width</span></label>
+              <input type="range" min="600" max="1400" step="50" value={targetWidth} onChange={e => setTargetWidth(parseInt(e.target.value))} className="range" />
+              <div className="text-xs opacity-70 mt-1">{targetWidth}px</div>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <button className="btn btn-primary flex-1" onClick={analyze} disabled={phase === 'analyzing'}>
+              {phase === 'analyzing' ? <Loader2 className="animate-spin" size={16} /> : null}
+              <span className="ml-1">{phase === 'analyzing' ? 'Analyzing...' : 'Analyze'}</span>
+            </button>
+            <button className="btn btn-ghost flex-1" onClick={retake}>
+              <RotateCcw size={16} /> <span className="ml-1">Retake</span>
+            </button>
+          </div>
+
+          {(status || phase === 'analyzing') && (
+            <div className="text-xs opacity-80">
+              {status} {progress ? `• ${progress}%` : ''}
+            </div>
+          )}
+
+          <div className="form-control">
+            <label className="label"><span className="label-text">Recognized reading</span></label>
+            <input
+              type="number"
+              className="input input-bordered"
+              placeholder="Not recognized yet"
+              value={recognized}
+              onChange={(e) => setRecognized(e.target.value)}
+            />
+            <div className="flex gap-2 mt-2">
+              <button className="btn btn-success flex-1" onClick={confirmUse} disabled={!recognized}>
+                Use value
+              </button>
+              <button className="btn flex-1" onClick={() => setRecognized('')}>
+                Clear
+              </button>
+            </div>
+            <p className="text-[11px] opacity-70 mt-1">
+              Tip: Crop tightly around the digits area for best accuracy.
+            </p>
+          </div>
+        </>
+      )}
 
       <canvas ref={canvasRef} className="hidden" />
     </div>
@@ -230,8 +315,18 @@ function frameToImage(video, canvas) {
     ctx.drawImage(video, 0, 0, w, h);
     const img = new Image();
     img.onload = () => resolve(img);
-    img.src = canvas.toDataURL('image/jpeg', 0.92);
+    img.src = canvas.toDataURL('image/jpeg', 0.9);
   });
+}
+
+function imageToDataUrl(img) {
+  const c = document.createElement('canvas');
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return c.toDataURL('image/jpeg', 0.9);
 }
 
 function fileToImage(file) {
