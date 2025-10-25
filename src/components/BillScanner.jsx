@@ -2,6 +2,13 @@ import { useContext, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
 import { FileText, Upload, Loader2 } from 'lucide-react';
 
+// Inline API base to avoid Rollup resolving wrong config file
+const IS_NATIVE =
+  typeof window !== 'undefined' &&
+  window.location &&
+  window.location.protocol === 'capacitor:';
+const API_BASE = IS_NATIVE ? 'https://YOUR-VERCEL-APP.vercel.app' : '';
+
 function fileToImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -28,7 +35,6 @@ export default function BillScanner({ onParsed, onClose }) {
       const { img, url } = await fileToImage(file);
       setPreview(url);
 
-      // Compress to ~1000px for speed
       const c = document.createElement('canvas');
       const maxW = 1200;
       const ratio = (img.naturalWidth || img.width) / (img.naturalHeight || img.height);
@@ -54,7 +60,7 @@ export default function BillScanner({ onParsed, onClose }) {
     setLoading(true);
     setStatus('Recognizing...');
     try {
-      const resp = await fetch('/api/ocr', {
+      const resp = await fetch(`${API_BASE}/api/ocr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataUrl, language: settings.language })
