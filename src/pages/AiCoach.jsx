@@ -7,7 +7,6 @@ import {
   dailyTargetForBudget,
   detectSpike
 } from '../lib/calculations.js';
-import { Loader2, Send, Sparkles, FileText } from 'lucide-react';
 import BillScanner from '../components/BillScanner.jsx';
 import { tFactory } from '../i18n/index.js';
 
@@ -38,14 +37,11 @@ export default function AiCoach() {
     t('coach.prompt4')
   ];
 
-  const send = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
-
-    const userMsg = { role: 'user', parts: [{ text: input.trim() }] };
+  async function sendMessage(text) {
+    if (!text.trim()) return;
+    const userMsg = { role: 'user', parts: [{ text: text.trim() }] };
     const newHistory = [...chatHistory, userMsg];
     setChatHistory(newHistory);
-    setInput('');
     setLoading(true);
 
     const {
@@ -106,6 +102,12 @@ export default function AiCoach() {
     } finally {
       setLoading(false);
     }
+  }
+
+  const onSubmit = (e) => {
+    e.preventDefault();
+    sendMessage(input);
+    setInput('');
   };
 
   return (
@@ -113,7 +115,7 @@ export default function AiCoach() {
       {/* Bill scan action */}
       <div className="p-2 flex items-center gap-2">
         <button className="btn btn-outline btn-sm" onClick={() => setBillOpen(true)}>
-          <FileText size={16} /> <span className="ml-1">{t('coach.scanBill')}</span>
+          📄 <span className="ml-1">{t('coach.scanBill')}</span>
         </button>
       </div>
 
@@ -123,10 +125,10 @@ export default function AiCoach() {
           <button
             key={i}
             className="btn btn-xs btn-outline"
-            onClick={() => { setInput(q); setTimeout(() => send(new Event('submit')), 0); }}
+            onClick={() => sendMessage(q)}
             disabled={loading}
           >
-            <Sparkles size={14} /> <span className="ml-1">{q}</span>
+            ✨ <span className="ml-1">{q}</span>
           </button>
         ))}
       </div>
@@ -142,14 +144,14 @@ export default function AiCoach() {
         ))}
         {loading && (
           <div className="chat chat-start">
-            <div className="chat-bubble"><span className="loading loading-dots loading-md" /></div>
+            <div className="chat-bubble">…</div>
           </div>
         )}
         <div ref={endRef} />
       </div>
 
       {/* Input bar */}
-      <form onSubmit={send} className="p-2 bg-base-100 flex gap-2">
+      <form onSubmit={onSubmit} className="p-2 bg-base-100 flex gap-2">
         <input
           className="input input-bordered w-full"
           placeholder={t('coach.inputPH')}
@@ -158,7 +160,7 @@ export default function AiCoach() {
           disabled={loading}
         />
         <button className="btn btn-primary" type="submit" disabled={loading}>
-          {loading ? <Loader2 className="animate-spin" /> : <Send />}
+          {loading ? '…' : 'Send'}
         </button>
       </form>
 
