@@ -1,3 +1,4 @@
+// Tariff presets (example values; adjust as needed)
 export const TARIFF_PRESETS = {
   MA: {
     currency: "MAD",
@@ -14,7 +15,7 @@ export const TARIFF_PRESETS = {
   US: { currency: "USD", tiers: [{ upTo: Infinity, price: 0.18 }] }
 };
 
-// Progressive blocks
+// Progressive block billing
 export function calculateBillProgressive(kwh, tariffs) {
   const safeKwh = Number.isFinite(kwh) ? Math.max(0, kwh) : 0;
   if (!tariffs || !tariffs.tiers) return { bill: "0.00", currency: "USD" };
@@ -34,7 +35,7 @@ export function calculateBillProgressive(kwh, tariffs) {
   return { bill: bill.toFixed(2), currency: tariffs.currency };
 }
 
-// Whole-tier (all kWh at reached tier)
+// Whole-tier billing (all kWh at the reached tier price)
 export function calculateBillWholeTier(kwh, tariffs) {
   const safeKwh = Number.isFinite(kwh) ? Math.max(0, kwh) : 0;
   if (!tariffs || !tariffs.tiers) return { bill: "0.00", currency: "USD" };
@@ -61,7 +62,7 @@ export function getMonthBoundaries(date = new Date()) {
 // Trend/forecast from counter readings this month (linear regression)
 export function computeTrendDailyKwh(readings, now = new Date()) {
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
-  const { start, daysInMonth, daysSoFar } = getMonthBoundaries(now);
+  const { start, end, daysInMonth, daysSoFar } = getMonthBoundaries(now);
   const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
 
   if (!Array.isArray(readings) || readings.length === 0) {
@@ -81,7 +82,6 @@ export function computeTrendDailyKwh(readings, now = new Date()) {
   const lastVal = Number(lastInMonth.value) || firstVal;
 
   const nowVal = Math.max(0, lastVal - firstVal);
-
   const spanToNowDays = Math.max(1e-6, (now - firstDate) / MS_PER_DAY);
   const rawAvgDaily = nowVal / spanToNowDays;
 
@@ -104,8 +104,8 @@ export function computeTrendDailyKwh(readings, now = new Date()) {
     if (denom > 1e-9) slope = Math.max(0, (n * sumXY - sumX * sumY) / denom);
   }
 
-  let predictedUsage = nowVal + slope * daysLeft;
-  if (!Number.isFinite(predictedUsage) || predictedUsage < nowVal) predictedUsage = nowVal;
+  // Forecast to month end
+  const predictedUsage = Math.max(nowVal + slope * daysLeft, nowVal);
 
   return {
     currentUsage: nowVal,
@@ -130,7 +130,34 @@ export function kwhToNextTier(currentKwh, tariffs) {
   return Infinity;
 }
 
-// What-if: reduce remaining-days trend by X%
+// Budget helpers
+export function kwhForBudget(budget, tariffs) {
+  const b = Number.isFinite(budget) ? budget : 0;
+  if (!b || !tariffs) return 0;
+  let lo = 0, hi = 100000;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    const { bill } = calculateBillProgressive(mid, tariffs);
+    if (parseFloat(bill) > b) hi = mid; else lo = mid;
+  }
+  return lo;
+}
+
+export function dailyTargetForBudget(budget, tariffs, daysInMonth, consumedKwhSoFar, dayOfMonth) {
+  const b = Number.isFinite(budget) ? budget : 0;
+  if (!b || !tariffs) return { dailyTarget: 0, remainingKwhAllowed: 0, remainingDays: 0 };
+  const remainingDays = Math.max(daysInMonth - dayOfMonth, 0);
+  const maxMonthKwh = kwhForBudget(b, tariffs);
+  const remainingKwhAllowed = Math.max(0, maxMonthKwh - Math.max(0, consumedKwhSoFar));
+  const dailyTarget = remainingDays > 0 ? (remainingKwhAllowed / remainingDays) : 0;
+  return {
+    dailyTarget: Number(dailyTarget.toFixed(2)),
+    remainingKwhAllowed: Number(remainingKwhAllowed.toFixed(2)),
+    remainingDays
+  };
+}
+
+// What‑If: reduce remaining-days trend by X%
 export function predictedUsageWhatIf(currentUsage, trendDaily, daysLeft, reducePct = 0) {
   const r = Math.max(0, Math.min(100, reducePct));
   const factor = 1 - r / 100;
@@ -156,7 +183,7 @@ export function forecastBand(predictedUsage, tariffs, mode = "progressive", band
   return { low, high };
 }
 
-// Spike helpers (already in your codebase previously)
+// Daily increments within the month (for spike detection)
 export function dailyIncrements(readings) {
   const { start } = getMonthBoundaries(new Date());
   const monthReadings = [...(readings || [])]
@@ -180,6 +207,7 @@ export function dailyIncrements(readings) {
   return out;
 }
 
+// Spike detection: compare last interval vs recent baseline
 export function detectSpike(readings) {
   const inc = dailyIncrements(readings);
   const n = inc.length;
