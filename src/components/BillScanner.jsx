@@ -1,6 +1,5 @@
 import { useContext, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
-import { FileText, Upload, Loader2 } from 'lucide-react';
 
 // Inline API base
 const IS_NATIVE =
@@ -19,7 +18,7 @@ function fileToImage(file) {
   });
 }
 
-export default function BillScanner({ onParsed, onClose }) {
+export default function BillScanner({ onParsed }) {
   const { settings } = useContext(AppContext);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
@@ -82,12 +81,12 @@ export default function BillScanner({ onParsed, onClose }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <FileText />
+        <span>📄</span>
         <div className="font-medium">Scan your bill</div>
       </div>
 
       <label className={`btn btn-primary ${loading ? 'btn-disabled' : ''}`}>
-        <Upload size={18} /> <span className="ml-1">Choose photo</span>
+        📷 <span className="ml-1">Choose photo</span>
         <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
       </label>
 
@@ -98,8 +97,7 @@ export default function BillScanner({ onParsed, onClose }) {
       )}
 
       <button className="btn btn-accent w-full" onClick={analyze} disabled={loading || !dataUrl}>
-        {loading ? <Loader2 className="animate-spin" size={16} /> : null}
-        <span className="ml-2">{loading ? 'Analyzing...' : 'Analyze'}</span>
+        {loading ? '⏳ Analyzing...' : 'Analyze'}
       </button>
 
       {status && <div className="text-xs opacity-80">{status}</div>}
