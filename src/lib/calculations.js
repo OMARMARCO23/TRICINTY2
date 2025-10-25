@@ -34,7 +34,7 @@ export function calculateBillProgressive(kwh, tariffs) {
   return { bill: bill.toFixed(2), currency: tariffs.currency };
 }
 
-// Whole-tier (all kWh at the tier reached)
+// Whole-tier (all kWh at reached tier)
 export function calculateBillWholeTier(kwh, tariffs) {
   const safeKwh = Number.isFinite(kwh) ? Math.max(0, kwh) : 0;
   if (!tariffs || !tariffs.tiers) return { bill: "0.00", currency: "USD" };
@@ -58,12 +58,10 @@ export function getMonthBoundaries(date = new Date()) {
   return { start, end, daysInMonth: end.getDate(), daysSoFar: date.getDate() };
 }
 
-// Linear trend from counter readings within current month
-// slope (kWh/day) from linear regression on in-month readings.
-// Forecast: usage_so_far + slope * days_left
+// Trend/forecast from counter readings this month (linear regression)
 export function computeTrendDailyKwh(readings, now = new Date()) {
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
-  const { start, end, daysInMonth, daysSoFar } = getMonthBoundaries(now);
+  const { start, daysInMonth, daysSoFar } = getMonthBoundaries(now);
   const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
 
   if (!Array.isArray(readings) || readings.length === 0) {
@@ -82,7 +80,7 @@ export function computeTrendDailyKwh(readings, now = new Date()) {
   const lastInMonth = monthReadings[monthReadings.length - 1];
   const lastVal = Number(lastInMonth.value) || firstVal;
 
-  const nowVal = Math.max(0, lastVal - firstVal); // usage so far this month
+  const nowVal = Math.max(0, lastVal - firstVal);
 
   const spanToNowDays = Math.max(1e-6, (now - firstDate) / MS_PER_DAY);
   const rawAvgDaily = nowVal / spanToNowDays;
@@ -120,7 +118,45 @@ export function computeTrendDailyKwh(readings, now = new Date()) {
   };
 }
 
-// Daily increments within the month: delta kWh and rate (kWh/day)
+// kWh remaining to next tier
+export function kwhToNextTier(currentKwh, tariffs) {
+  const tiers = tariffs?.tiers || [];
+  const kwh = Number.isFinite(currentKwh) ? Math.max(0, currentKwh) : 0;
+  for (const t of tiers) {
+    const cap = t.upTo;
+    if (!isFinite(cap)) return Infinity;
+    if (kwh < cap) return Math.max(0, cap - kwh);
+  }
+  return Infinity;
+}
+
+// What-if: reduce remaining-days trend by X%
+export function predictedUsageWhatIf(currentUsage, trendDaily, daysLeft, reducePct = 0) {
+  const r = Math.max(0, Math.min(100, reducePct));
+  const factor = 1 - r / 100;
+  return Math.max(0, currentUsage + trendDaily * daysLeft * factor);
+}
+
+// Estimate the day-of-month you’ll cross next tier (null if not this month)
+export function estimateTierCrossDay(currentUsage, trendDaily, kwhToNext, daysSoFar, daysInMonth) {
+  if (!(trendDaily > 0) || !Number.isFinite(kwhToNext) || kwhToNext === Infinity) return null;
+  const daysUntil = kwhToNext / trendDaily;
+  const day = Math.ceil(daysSoFar + daysUntil);
+  if (day > daysInMonth) return null;
+  return Math.max(daysSoFar, Math.min(daysInMonth, day));
+}
+
+// Forecast band (±10%) using selected tariff mode
+export function forecastBand(predictedUsage, tariffs, mode = "progressive", band = 0.10) {
+  const pu = Number.isFinite(predictedUsage) ? Math.max(0, predictedUsage) : 0;
+  const lowUsage = Math.max(0, pu * (1 - band));
+  const highUsage = Math.max(0, pu * (1 + band));
+  const low = calculateBillByMode(lowUsage, tariffs, mode).bill;
+  const high = calculateBillByMode(highUsage, tariffs, mode).bill;
+  return { low, high };
+}
+
+// Spike helpers (already in your codebase previously)
 export function dailyIncrements(readings) {
   const { start } = getMonthBoundaries(new Date());
   const monthReadings = [...(readings || [])]
@@ -144,7 +180,6 @@ export function dailyIncrements(readings) {
   return out;
 }
 
-// Spike detection: compare last interval rate vs baseline of previous up to 3 intervals
 export function detectSpike(readings) {
   const inc = dailyIncrements(readings);
   const n = inc.length;
@@ -154,58 +189,9 @@ export function detectSpike(readings) {
   const baseline = prevRates.length ? prevRates.reduce((a, b) => a + b, 0) / prevRates.length : lastRate;
   const changePct = baseline > 0 ? ((lastRate - baseline) / baseline) * 100 : (lastRate > 0 ? 100 : 0);
   return {
-    isSpike: changePct >= 25, // 25% increase threshold
+    isSpike: changePct >= 25,
     lastRate,
     baselineRate: baseline,
     changePct
   };
-}
-
-// kWh to next price tier (based on current usage this month)
-export function kwhToNextTier(currentKwh, tariffs) {
-  const tiers = tariffs?.tiers || [];
-  const kwh = Number.isFinite(currentKwh) ? Math.max(0, currentKwh) : 0;
-  for (const t of tiers) {
-    const cap = t.upTo;
-    if (!isFinite(cap)) return Infinity;
-    if (kwh < cap) return Math.max(0, cap - kwh);
-  }
-  return Infinity;
-}
-
-// Budget helpers
-export function kwhForBudget(budget, tariffs) {
-  const b = Number.isFinite(budget) ? budget : 0;
-  if (!b || !tariffs) return 0;
-  let lo = 0, hi = 100000;
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2;
-    const { bill } = calculateBillProgressive(mid, tariffs);
-    if (parseFloat(bill) > b) hi = mid; else lo = mid;
-  }
-  return lo;
-}
-
-export function dailyTargetForBudget(budget, tariffs, daysInMonth, consumedKwhSoFar, dayOfMonth) {
-  const b = Number.isFinite(budget) ? budget : 0;
-  if (!b || !tariffs) return { dailyTarget: 0, remainingKwhAllowed: 0, remainingDays: 0 };
-  const remainingDays = Math.max(daysInMonth - dayOfMonth, 0);
-  const maxMonthKwh = kwhForBudget(b, tariffs);
-  const remainingKwhAllowed = Math.max(0, maxMonthKwh - Math.max(0, consumedKwhSoFar));
-  const dailyTarget = remainingDays > 0 ? (remainingKwhAllowed / remainingDays) : 0;
-  return {
-    dailyTarget: Number(dailyTarget.toFixed(2)),
-    remainingKwhAllowed: Number(remainingKwhAllowed.toFixed(2)),
-    remainingDays
-  };
-}
-
-// Forecast band (±10%) using selected tariff mode
-export function forecastBand(predictedUsage, tariffs, mode = "progressive", band = 0.10) {
-  const pu = Number.isFinite(predictedUsage) ? Math.max(0, predictedUsage) : 0;
-  const lowUsage = Math.max(0, pu * (1 - band));
-  const highUsage = Math.max(0, pu * (1 + band));
-  const low = calculateBillByMode(lowUsage, tariffs, mode).bill;
-  const high = calculateBillByMode(highUsage, tariffs, mode).bill;
-  return { low, high };
 }
