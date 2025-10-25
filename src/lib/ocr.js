@@ -1,15 +1,22 @@
 import Tesseract from 'tesseract.js';
 
-// Reliable CDN paths for Capacitor WebView
-const TESS_VERSION = '5.1.0';
+// Stable versions that work well in WebView
+const TESS_VERSION = '5.0.4';
+const CORE_VERSION = '5.0.0';
 const WORKER_PATH = `https://unpkg.com/tesseract.js@${TESS_VERSION}/dist/worker.min.js`;
-const CORE_PATH = `https://unpkg.com/tesseract.js-core@${TESS_VERSION}/tesseract-core.wasm.js`;
-const LANG_PATH = 'https://tessdata.projectnaptha.com/4.0.0';
+const CORE_PATH = `https://unpkg.com/tesseract.js-core@${CORE_VERSION}/tesseract-core.wasm.js`;
+// Use fast traineddata for quicker load and inference (great for digits)
+const LANG_PATH = 'https://tessdata.projectnaptha.com/4.0.0_fast';
 
 let worker = null;
 let loadedLangs = '';
 
-export async function initOcr({ langs = 'eng', whitelist = '0123456789.,', onProgress } = {}) {
+export async function initOcr({
+  langs = 'eng',
+  whitelist = '0123456789.,',
+  psm = '7', // 7=single text line, 8=single word
+  onProgress
+} = {}) {
   if (!worker) {
     worker = await Tesseract.createWorker({
       workerPath: WORKER_PATH,
@@ -23,45 +30,69 @@ export async function initOcr({ langs = 'eng', whitelist = '0123456789.,', onPro
     await worker.initialize(langs);
     loadedLangs = langs;
   }
-  if (whitelist) {
-    await worker.setParameters({
-      tessedit_char_whitelist: whitelist,
-      // numeric bias
-      classify_bln_numeric_mode: '1'
-    });
-  }
+  await worker.setParameters({
+    // Bias the classifier toward numbers and keep only digits/decimal separators
+    tessedit_char_whitelist: whitelist,
+    classify_bln_numeric_mode: '1',
+    // Single-line text improves meter digit reading
+    tessedit_pageseg_mode: String(psm), // '7' single line
+    user_defined_dpi: '300',
+    preserve_interword_spaces: '1'
+  });
   return worker;
 }
 
-export async function ocrImage(imageOrCanvas, { langs = 'eng', whitelist = '0123456789.,', onProgress } = {}) {
-  const w = await initOcr({ langs, whitelist, onProgress });
-  const { data } = await w.recognize(imageOrCanvas);
-  return data;
+export async function ocrImage(
+  imageOrCanvas,
+  {
+    langs = 'eng',
+    whitelist = '0123456789.,',
+    psm = '7',
+    onProgress,
+    timeoutMs = 15000
+  } = {}
+) {
+  const w = await initOcr({ langs, whitelist, psm, onProgress });
+
+  // Guard against infinite waits (bad inputs or network issues fetching assets on first run)
+  const task = w.recognize(imageOrCanvas);
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('OCR timeout')), timeoutMs)
+  );
+  const { data } = await Promise.race([task, timeout]);
+  return data; // { text, confidence, ... }
 }
 
-// Build a preprocessed canvas cropped to digits for faster, more accurate OCR
-export function preprocessCropToCanvas(img, cropPct = { x: 0.1, y: 0.35, w: 0.8, h: 0.3 }, targetWidth = 1000, threshold = 180) {
+// Preprocess: crop + scale + binarize for faster, more accurate OCR
+export function preprocessCropToCanvas(
+  img,
+  cropPct = { x: 0.1, y: 0.35, w: 0.8, h: 0.3 },
+  targetWidth = 900,
+  threshold = 180
+) {
   const natW = img.naturalWidth || img.width;
   const natH = img.naturalHeight || img.height;
 
-  const sx = Math.max(0, Math.min(natW, Math.round(natW * cropPct.x)));
-  const sy = Math.max(0, Math.min(natH, Math.round(natH * cropPct.y)));
-  const sw = Math.max(1, Math.round(natW * cropPct.w));
-  const sh = Math.max(1, Math.round(natH * cropPct.h));
+  const sx = clamp(Math.round(natW * cropPct.x), 0, natW - 1);
+  const sy = clamp(Math.round(natH * cropPct.y), 0, natH - 1);
+  const sw = clamp(Math.round(natW * cropPct.w), 1, natW - sx);
+  const sh = clamp(Math.round(natH * cropPct.h), 1, natH - sy);
 
   const scale = targetWidth / sw;
-  const cw = Math.round(sw * scale);
-  const ch = Math.round(sh * scale);
+  const cw = Math.max(1, Math.round(sw * scale));
+  const ch = Math.max(1, Math.round(sh * scale));
 
   const c = document.createElement('canvas');
   c.width = cw;
   c.height = ch;
   const ctx = c.getContext('2d');
 
-  // Draw crop
+  // Draw crop area scaled
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
 
-  // Grayscale + simple threshold
+  // Grayscale + threshold (simple and fast)
   const imgData = ctx.getImageData(0, 0, cw, ch);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -94,4 +125,8 @@ export function extractBestNumberFromText(text, { minDigits = 4, preferBiggerTha
     if (bigger.length) return bigger.sort((a, b) => b.num - a.num)[0];
   }
   return candidates.sort((a, b) => b.num - a.num)[0];
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
 }
