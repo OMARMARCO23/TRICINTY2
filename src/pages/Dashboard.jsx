@@ -14,7 +14,13 @@ import {
 import { CircleDollarSign, Zap, TrendingUp, Plus, Activity, RefreshCcw, AlertTriangle, Sparkles, ScanLine, Bell, BellRing } from 'lucide-react';
 import MeterScanner from '../components/MeterScanner.jsx';
 import { tFactory } from '../i18n/index.js';
-import { API_BASE } from '../config.js';
+
+// Inline API base to avoid Rollup resolving a wrong config file
+const IS_NATIVE =
+  typeof window !== 'undefined' &&
+  window.location &&
+  window.location.protocol === 'capacitor:';
+const API_BASE = IS_NATIVE ? 'https://YOUR-VERCEL-APP.vercel.app' : '';
 
 export default function Dashboard() {
   const { readings, setReadings, settings } = useContext(AppContext);
@@ -62,7 +68,7 @@ export default function Dashboard() {
 
   const lastReadingVal = readings[readings.length - 1]?.value ?? 0;
 
-  // What-if simulator (% reduction for remaining days)
+  // What‑If simulator
   const [whatIfPct, setWhatIfPct] = useState(0);
   const predictedWIUsage = useMemo(
     () => predictedUsageWhatIf(currentUsage, trendDaily, daysLeft, whatIfPct),
@@ -135,8 +141,6 @@ export default function Dashboard() {
     if (!notifSupported) return;
     if (!spike.isSpike) return;
     if (Notification.permission !== 'granted') return;
-
-    // Avoid duplicate notifications per day
     const todayKey = `tricinty-spike-${new Date().toDateString()}`;
     if (!localStorage.getItem(todayKey)) {
       new Notification('TRICINTY', {
