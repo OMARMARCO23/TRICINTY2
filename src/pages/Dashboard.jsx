@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { AppContext } from '../contexts/AppContext.jsx';
 import {
   calculateBillByMode,
@@ -7,9 +7,11 @@ import {
   dailyTargetForBudget,
   forecastBand,
   detectSpike,
-  dailyIncrements
+  dailyIncrements,
+  predictedUsageWhatIf,
+  estimateTierCrossDay
 } from '../lib/calculations.js';
-import { CircleDollarSign, Zap, TrendingUp, Plus, Activity, RefreshCcw, AlertTriangle, Sparkles, ScanLine } from 'lucide-react';
+import { CircleDollarSign, Zap, TrendingUp, Plus, Activity, RefreshCcw, AlertTriangle, Sparkles, ScanLine, Bell, BellRing } from 'lucide-react';
 import MeterScanner from '../components/MeterScanner.jsx';
 import { tFactory } from '../i18n/index.js';
 import { API_BASE } from '../config.js';
@@ -38,7 +40,8 @@ export default function Dashboard() {
   const actual = calculateBillByMode(currentUsage, settings.tariffs, settings.tariffMode);
   const predicted = calculateBillByMode(predictedUsage, settings.tariffs, settings.tariffMode);
   const band = forecastBand(predictedUsage, settings.tariffs, settings.tariffMode, 0.10);
-  const toNextTier = kwhToNextTier(currentUsage, settings.tariffs);
+  const toNext = kwhToNextTier(currentUsage, settings.tariffs);
+  const crossDay = estimateTierCrossDay(currentUsage, trendDaily, toNext, daysSoFar, daysInMonth);
 
   const { dailyTarget } = dailyTargetForBudget(
     Number(settings.goal) || 0,
@@ -51,7 +54,6 @@ export default function Dashboard() {
   const goalProgress = settings.goal > 0 ? (parseFloat(actual.bill) / settings.goal) * 100 : 0;
   const progressColor = goalProgress >= 100 ? 'progress-error' : goalProgress > 75 ? 'progress-warning' : 'progress-success';
 
-  // Spike detection
   const spike = detectSpike(readings);
   const inc = dailyIncrements(readings);
   const lastRate = Number((spike.lastRate || 0).toFixed(2));
@@ -59,6 +61,15 @@ export default function Dashboard() {
   const changePct = Number((spike.changePct || 0).toFixed(1));
 
   const lastReadingVal = readings[readings.length - 1]?.value ?? 0;
+
+  // What-if simulator (% reduction for remaining days)
+  const [whatIfPct, setWhatIfPct] = useState(0);
+  const predictedWIUsage = useMemo(
+    () => predictedUsageWhatIf(currentUsage, trendDaily, daysLeft, whatIfPct),
+    [currentUsage, trendDaily, daysLeft, whatIfPct]
+  );
+  const predictedWIBill = calculateBillByMode(predictedWIUsage, settings.tariffs, settings.tariffMode);
+  const bandWI = forecastBand(predictedWIUsage, settings.tariffs, settings.tariffMode, 0.10);
 
   const addReading = () => {
     const val = Number(newReading);
@@ -86,7 +97,7 @@ export default function Dashboard() {
         goal: `${settings.goal} ${settings.tariffs.currency}`,
         currency: settings.tariffs.currency,
         daysLeft,
-        kwhToNextTier: Number.isFinite(toNextTier) ? Number(toNextTier.toFixed(0)) : 'Infinity',
+        kwhToNextTier: Number.isFinite(toNext) ? Number(toNext.toFixed(0)) : 'Infinity',
         dailyTarget,
         lastRate,
         baselineRate,
@@ -109,6 +120,32 @@ export default function Dashboard() {
       setInsightLoading(false);
     }
   }
+
+  // Notifications for spike
+  const notifSupported = typeof window !== 'undefined' && 'Notification' in window;
+  const [notifPerm, setNotifPerm] = useState(notifSupported ? Notification.permission : 'default');
+
+  const enableNotifications = async () => {
+    if (!notifSupported) return;
+    const p = await Notification.requestPermission();
+    setNotifPerm(p);
+  };
+
+  useEffect(() => {
+    if (!notifSupported) return;
+    if (!spike.isSpike) return;
+    if (Notification.permission !== 'granted') return;
+
+    // Avoid duplicate notifications per day
+    const todayKey = `tricinty-spike-${new Date().toDateString()}`;
+    if (!localStorage.getItem(todayKey)) {
+      new Notification('TRICINTY', {
+        body: `Usage spike detected: ${Math.abs(changePct).toFixed(0)}% above recent days.`,
+        icon: '/icon-192.png'
+      });
+      localStorage.setItem(todayKey, '1');
+    }
+  }, [notifSupported, spike.isSpike, changePct]);
 
   useEffect(() => {
     if (spike.isSpike) {
@@ -146,8 +183,29 @@ export default function Dashboard() {
               {Number(settings.goal) > 0 && (
                 <li>{t('dashboard.targetHint', { dailyTarget, goal: settings.goal, currency: actual.currency })}</li>
               )}
-              {Number.isFinite(toNextTier) && <li>{t('dashboard.toNextTier', { kwh: toNextTier.toFixed(0) })}</li>}
+              {Number.isFinite(toNext) && <li>{t('dashboard.toNextTier', { kwh: toNext.toFixed(0) })}</li>}
+              {Number.isFinite(toNext) && crossDay && <li>Estimated crossing: day {crossDay} of this month.</li>}
             </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* What‑If Simulator */}
+      <div className="card bg-base-100 shadow-xl">
+        <div className="card-body">
+          <h2 className="card-title">What‑If: reduce remaining usage</h2>
+          <input type="range" min="0" max="50" step="1" value={whatIfPct} onChange={(e) => setWhatIfPct(parseInt(e.target.value))} className="range" />
+          <div className="text-sm opacity-70 mt-1">{whatIfPct}% reduction on remaining days</div>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <div className="p-3 rounded bg-base-200">
+              <div className="text-xs opacity-70">Predicted bill</div>
+              <div className="font-bold">{predictedWIBill.bill} {predictedWIBill.currency}</div>
+              <div className="text-[11px] opacity-70">Range: {bandWI.low}–{bandWI.high} {predictedWIBill.currency}</div>
+            </div>
+            <div className="p-3 rounded bg-base-200">
+              <div className="text-xs opacity-70">Predicted usage</div>
+              <div className="font-bold">{predictedWIUsage.toFixed(0)} kWh</div>
+            </div>
           </div>
         </div>
       </div>
@@ -174,6 +232,19 @@ export default function Dashboard() {
           {insightError && <div className="text-error text-sm">{insightError}</div>}
           {!insight && !insightLoading && <p className="text-sm opacity-70">{t('aiInsight.getTip')}</p>}
           {insight && <p className="text-sm">{insight}</p>}
+
+          {notifSupported && notifPerm !== 'granted' && (
+            <div className="mt-3">
+              <button className="btn btn-outline btn-sm" onClick={enableNotifications}>
+                <Bell size={16} /> Enable spike notifications
+              </button>
+            </div>
+          )}
+          {notifSupported && notifPerm === 'granted' && (
+            <div className="mt-2 text-xs opacity-70 flex items-center gap-1">
+              <BellRing size={14} /> Notifications enabled
+            </div>
+          )}
         </div>
       </div>
 
