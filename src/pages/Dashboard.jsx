@@ -11,11 +11,10 @@ import {
   predictedUsageWhatIf,
   estimateTierCrossDay
 } from '../lib/calculations.js';
-import { CircleDollarSign, Zap, TrendingUp, Plus, Activity, RefreshCcw, AlertTriangle, Sparkles, Scan } from 'lucide-react';
 import MeterScanner from '../components/MeterScanner.jsx';
 import { tFactory } from '../i18n/index.js';
 
-// Inline API base (no config import)
+// Inline API base (no external config)
 const IS_NATIVE =
   typeof window !== 'undefined' &&
   window.location &&
@@ -62,8 +61,6 @@ export default function Dashboard() {
 
   const spike = detectSpike(readings);
   const inc = dailyIncrements(readings);
-  const lastRate = Number((spike.lastRate || 0).toFixed(2));
-  const baselineRate = Number((spike.baselineRate || 0).toFixed(2));
   const changePct = Number((spike.changePct || 0).toFixed(1));
 
   const lastReadingVal = readings[readings.length - 1]?.value ?? 0;
@@ -105,8 +102,8 @@ export default function Dashboard() {
         daysLeft,
         kwhToNextTier: Number.isFinite(toNext) ? Number(toNext.toFixed(0)) : 'Infinity',
         dailyTarget,
-        lastRate,
-        baselineRate,
+        lastRate: 0,
+        baselineRate: 0,
         changePct
       };
       const chatHistory = [
@@ -142,17 +139,17 @@ export default function Dashboard() {
             <div className="text-3xl font-extrabold mt-1">{predicted.bill} {predicted.currency}</div>
             <div className="text-xs mt-1 opacity-90">{t('dashboard.range')}: {band.low}–{band.high} {predicted.currency}</div>
           </div>
-          <CircleDollarSign size={40} className="opacity-90" />
+          <div className="text-3xl">💡</div>
         </div>
       </div>
 
       {/* Key Stats */}
       <div className="grid grid-cols-2 gap-4">
-        <StatCard icon={<Zap className="h-7 w-7 text-info" />} title={t('dashboard.currentUsage')} value={`${currentUsage.toFixed(0)} kWh`} />
-        <StatCard icon={<Activity className="h-7 w-7 text-accent" />} title={t('dashboard.dailyTrend')} value={`${trendDaily.toFixed(2)} kWh/day`}>
+        <StatCard title={t('dashboard.currentUsage')} value={`${currentUsage.toFixed(0)} kWh`} icon="⚡" />
+        <StatCard title={t('dashboard.dailyTrend')} value={`${trendDaily.toFixed(2)} kWh/day`} icon="📈">
           <p className="text-xs opacity-70">{t('dashboard.avgSoFar')}: {rawAvgDaily.toFixed(2)} kWh/day</p>
         </StatCard>
-        <StatCard icon={<TrendingUp className="h-7 w-7 text-success" />} title={t('dashboard.actualBill')} value={`${actual.bill} ${actual.currency}`} />
+        <StatCard title={t('dashboard.actualBill')} value={`${actual.bill} ${actual.currency}`} icon="💳" />
         <div className="card bg-base-100 shadow-xl">
           <div className="card-body p-4">
             <div className="text-xs opacity-70">{t('dashboard.insights')}</div>
@@ -193,17 +190,17 @@ export default function Dashboard() {
         <div className="card-body">
           <div className="flex items-center justify-between">
             <h2 className="card-title flex items-center gap-2">
-              <Sparkles className="text-primary" /> {t('aiInsight.title')}
+              <span className="text-xl">✨</span> {t('aiInsight.title')}
             </h2>
             <button className="btn btn-sm" onClick={fetchInsight} disabled={insightLoading}>
-              <RefreshCcw size={16} className={insightLoading ? 'animate-spin' : ''} /> {insightLoading ? t('aiInsight.thinking') : t('aiInsight.refresh')}
+              {insightLoading ? '⏳ ' + t('aiInsight.thinking') : '🔄 ' + t('aiInsight.refresh')}
             </button>
           </div>
 
           {spike.isSpike && (
             <div className="alert alert-warning text-warning-content my-2">
-              <AlertTriangle />
-              <span>{t('aiInsight.spike', { percent: Math.abs(changePct).toFixed(0) })}</span>
+              <span>⚠️</span>
+              <span className="ml-2">{t('aiInsight.spike', { percent: Math.abs(changePct).toFixed(0) })}</span>
             </div>
           )}
 
@@ -215,12 +212,8 @@ export default function Dashboard() {
 
       {/* Actions */}
       <div className="grid grid-cols-2 gap-3">
-        <button className="btn btn-accent" onClick={() => setScanOpen(true)}>
-          <Scan size={18} /> <span className="ml-1">{t('dashboard.scanMeter')}</span>
-        </button>
-        <button className="btn btn-primary" onClick={() => document.getElementById('add_reading_modal')?.showModal()}>
-          <Plus size={18} /> <span className="ml-1">{t('dashboard.addReading')}</span>
-        </button>
+        <button className="btn btn-accent" onClick={() => setScanOpen(true)}>📷 {t('dashboard.scanMeter')}</button>
+        <button className="btn btn-primary" onClick={() => document.getElementById('add_reading_modal')?.showModal()}>➕ {t('dashboard.addReading')}</button>
       </div>
 
       {/* Recent Activity */}
@@ -291,11 +284,11 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ icon, title, value, children }) {
+function StatCard({ title, value, icon, children }) {
   return (
     <div className="card bg-base-100 shadow-xl">
       <div className="card-body items-center text-center p-4">
-        {icon}
+        <div className="text-2xl">{icon || 'ℹ️'}</div>
         <h2 className="card-title text-sm">{title}</h2>
         <p className="font-bold text-lg">{value}</p>
         {children}
