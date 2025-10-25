@@ -2,7 +2,7 @@ import { useContext, useMemo, useState } from 'react';
 import { Upload, Camera, Loader2, RotateCcw } from 'lucide-react';
 import { AppContext } from '../contexts/AppContext.jsx';
 
-// Inline API base to avoid Rollup resolving wrong config file
+// Inline API base
 const IS_NATIVE =
   typeof window !== 'undefined' &&
   window.location &&
