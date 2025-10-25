@@ -11,11 +11,11 @@ import {
   predictedUsageWhatIf,
   estimateTierCrossDay
 } from '../lib/calculations.js';
-import { CircleDollarSign, Zap, TrendingUp, Plus, Activity, RefreshCcw, AlertTriangle, Sparkles, ScanLine, Bell, BellRing } from 'lucide-react';
+import { CircleDollarSign, Zap, TrendingUp, Plus, Activity, RefreshCcw, AlertTriangle, Sparkles, Scan } from 'lucide-react';
 import MeterScanner from '../components/MeterScanner.jsx';
 import { tFactory } from '../i18n/index.js';
 
-// Inline API base to avoid Rollup resolving a wrong config file
+// Inline API base (no config import)
 const IS_NATIVE =
   typeof window !== 'undefined' &&
   window.location &&
@@ -127,34 +127,8 @@ export default function Dashboard() {
     }
   }
 
-  // Notifications for spike
-  const notifSupported = typeof window !== 'undefined' && 'Notification' in window;
-  const [notifPerm, setNotifPerm] = useState(notifSupported ? Notification.permission : 'default');
-
-  const enableNotifications = async () => {
-    if (!notifSupported) return;
-    const p = await Notification.requestPermission();
-    setNotifPerm(p);
-  };
-
   useEffect(() => {
-    if (!notifSupported) return;
-    if (!spike.isSpike) return;
-    if (Notification.permission !== 'granted') return;
-    const todayKey = `tricinty-spike-${new Date().toDateString()}`;
-    if (!localStorage.getItem(todayKey)) {
-      new Notification('TRICINTY', {
-        body: `Usage spike detected: ${Math.abs(changePct).toFixed(0)}% above recent days.`,
-        icon: '/icon-192.png'
-      });
-      localStorage.setItem(todayKey, '1');
-    }
-  }, [notifSupported, spike.isSpike, changePct]);
-
-  useEffect(() => {
-    if (spike.isSpike) {
-      fetchInsight().catch(() => {});
-    }
+    if (spike.isSpike) fetchInsight().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spike.isSpike, readings.length, settings.language]);
 
@@ -236,26 +210,13 @@ export default function Dashboard() {
           {insightError && <div className="text-error text-sm">{insightError}</div>}
           {!insight && !insightLoading && <p className="text-sm opacity-70">{t('aiInsight.getTip')}</p>}
           {insight && <p className="text-sm">{insight}</p>}
-
-          {notifSupported && notifPerm !== 'granted' && (
-            <div className="mt-3">
-              <button className="btn btn-outline btn-sm" onClick={enableNotifications}>
-                <Bell size={16} /> Enable spike notifications
-              </button>
-            </div>
-          )}
-          {notifSupported && notifPerm === 'granted' && (
-            <div className="mt-2 text-xs opacity-70 flex items-center gap-1">
-              <BellRing size={14} /> Notifications enabled
-            </div>
-          )}
         </div>
       </div>
 
       {/* Actions */}
       <div className="grid grid-cols-2 gap-3">
         <button className="btn btn-accent" onClick={() => setScanOpen(true)}>
-          <ScanLine size={18} /> <span className="ml-1">{t('dashboard.scanMeter')}</span>
+          <Scan size={18} /> <span className="ml-1">{t('dashboard.scanMeter')}</span>
         </button>
         <button className="btn btn-primary" onClick={() => document.getElementById('add_reading_modal')?.showModal()}>
           <Plus size={18} /> <span className="ml-1">{t('dashboard.addReading')}</span>
