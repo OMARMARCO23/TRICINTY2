@@ -62,7 +62,7 @@ export function getMonthBoundaries(date = new Date()) {
 // Trend/forecast from counter readings this month (linear regression)
 export function computeTrendDailyKwh(readings, now = new Date()) {
   const MS_PER_DAY = 1000 * 60 * 60 * 24;
-  const { start, end, daysInMonth, daysSoFar } = getMonthBoundaries(now);
+  const { start, daysInMonth, daysSoFar } = getMonthBoundaries(now);
   const daysLeft = Math.max(daysInMonth - daysSoFar, 0);
 
   if (!Array.isArray(readings) || readings.length === 0) {
@@ -164,7 +164,7 @@ export function predictedUsageWhatIf(currentUsage, trendDaily, daysLeft, reduceP
   return Math.max(0, currentUsage + trendDaily * daysLeft * factor);
 }
 
-// Estimate the day-of-month you’ll cross next tier (null if not this month)
+// Estimate day-of-month you’ll cross next tier (null if not this month)
 export function estimateTierCrossDay(currentUsage, trendDaily, kwhToNext, daysSoFar, daysInMonth) {
   if (!(trendDaily > 0) || !Number.isFinite(kwhToNext) || kwhToNext === Infinity) return null;
   const daysUntil = kwhToNext / trendDaily;
