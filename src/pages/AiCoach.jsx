@@ -15,7 +15,7 @@ const IS_NATIVE =
   typeof window !== 'undefined' &&
   window.location &&
   window.location.protocol === 'capacitor:';
-const API_BASE = IS_NATIVE ? 'https://YOUR-VERCEL-APP.vercel.app' : '';
+const API_BASE = IS_NATIVE ? 'https://tricinty-2.vercel.app' : '';
 
 export default function AiCoach() {
   const { readings, settings, chatHistory, setChatHistory } = useContext(AppContext);
